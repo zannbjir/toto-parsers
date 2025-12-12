@@ -9,7 +9,7 @@ import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 
 @MangaSourceParser("EPSILONSCAN", "EpsilonScan", "fr", ContentType.HENTAI)
 internal class EpsilonscanParser(context: MangaLoaderContext) :
-	MadaraParser(context, MangaParserSource.EPSILONSCAN, "epsilonscan.to") {
+	MadaraParser(context, MangaParserSource.EPSILONSCAN, "beta.epsilonscan.to") {
 	override val datePattern = "dd/MM/yy"
 	override val withoutAjax = true
 }
