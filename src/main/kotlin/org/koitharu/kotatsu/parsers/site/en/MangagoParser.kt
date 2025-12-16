@@ -273,7 +273,7 @@ internal class MangagoParser(context: MangaLoaderContext) :
             ?: throw Exception("Could not find chapter.js")
 
         // Download and deobfuscate chapter.js
-        val obfuscatedChapterJs = webClient.httpGet(chapterJsUrl).parseRaw().use { it.string() }
+        val obfuscatedChapterJs = webClient.httpGet(chapterJsUrl).parseRaw()
         val deobfChapterJs = deobfuscateSoJsonV4(obfuscatedChapterJs)
 
         // Extract AES key and IV
