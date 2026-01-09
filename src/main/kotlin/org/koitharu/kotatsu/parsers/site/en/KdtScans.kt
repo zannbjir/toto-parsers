@@ -231,13 +231,49 @@ internal class KdtScans(context: MangaLoaderContext) :
         val fullUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(fullUrl).parseHtml()
 
+        // Check all script tags
+        val allScripts = doc.select("script")
+        println("[KdtScans] Found ${allScripts.size} script tags total")
+
+        // Look for LD+JSON scripts specifically
+        val ldJsonScripts = doc.select("script[type='application/ld+json']")
+        println("[KdtScans] Found ${ldJsonScripts.size} LD+JSON script tags")
+
         // Extract LD+JSON schema
         val ldJsonScript = doc.selectFirst("script[type='application/ld+json'].rank-math-schema")?.html()
-            ?: return emptyList()
+        if (ldJsonScript == null) {
+            println("[KdtScans] ERROR: Could not find script[type='application/ld+json'].rank-math-schema")
+            // Try without the class selector
+            val anyLdJson = doc.selectFirst("script[type='application/ld+json']")?.html()
+            if (anyLdJson == null) {
+                println("[KdtScans] ERROR: Could not find any script[type='application/ld+json']")
+                return emptyList()
+            }
+            println("[KdtScans] Found LD+JSON without class, trying to parse it")
+            return parseLdJson(anyLdJson)
+        }
 
+        println("[KdtScans] Found rank-math-schema script, length: ${ldJsonScript.length}")
+        return parseLdJson(ldJsonScript)
+    }
+
+    private suspend fun parseLdJson(ldJsonScript: String): List<MangaPage> {
         // Parse JSON to get primaryImageOfPage
-        val jsonObject = JSONObject(ldJsonScript)
-        val graphArray = jsonObject.optJSONArray("@graph") ?: return emptyList()
+        val jsonObject = try {
+            JSONObject(ldJsonScript)
+        } catch (e: Exception) {
+            println("[KdtScans] ERROR: Failed to parse JSON: ${e.message}")
+            return emptyList()
+        }
+
+        println("[KdtScans] Parsed JSON successfully")
+        val graphArray = jsonObject.optJSONArray("@graph")
+        if (graphArray == null) {
+            println("[KdtScans] ERROR: No @graph array found in JSON")
+            return emptyList()
+        }
+
+        println("[KdtScans] Found @graph array with ${graphArray.length()} items")
 
         var primaryImageUrl: String? = null
         for (i in 0 until graphArray.length()) {
@@ -245,13 +281,17 @@ internal class KdtScans(context: MangaLoaderContext) :
             if (item.has("primaryImageOfPage")) {
                 val imageObj = item.getJSONObject("primaryImageOfPage")
                 primaryImageUrl = imageObj.optString("url")
+                println("[KdtScans] Found primaryImageOfPage at index $i: $primaryImageUrl")
                 if (primaryImageUrl.isNotBlank()) break
             }
         }
 
         if (primaryImageUrl.isNullOrBlank()) {
+            println("[KdtScans] ERROR: primaryImageOfPage URL is null or blank")
             return emptyList()
         }
+
+        println("[KdtScans] Primary image URL: $primaryImageUrl")
 
         // Extract base path and file extension from the first image URL
         // Example: https://cdn.asdasdhg.com/Returned%20from%20Another%20World/Chapter%202.1/1.webp
@@ -260,27 +300,37 @@ internal class KdtScans(context: MangaLoaderContext) :
         val fileName = primaryImageUrl.substring(lastSlashIndex + 1)
         val extension = fileName.substring(fileName.lastIndexOf('.'))
 
+        println("[KdtScans] Base path: $basePath")
+        println("[KdtScans] File name: $fileName")
+        println("[KdtScans] Extension: $extension")
+
         // Sequential image loading with 404 detection
         val pages = mutableListOf<MangaPage>()
         var imageIndex = 1
         var consecutive404s = 0
         val maxConsecutive404s = 3
 
+        println("[KdtScans] Starting sequential image loading...")
+
         while (imageIndex <= 500) {
             val imageUrl = "$basePath$imageIndex$extension"
 
             // Try to fetch the image
             val response = webClient.httpHead(imageUrl)
+            val statusCode = response.code
 
-            if (response.code == 404) {
+            if (statusCode == 404) {
                 consecutive404s++
+                println("[KdtScans] Image $imageIndex: 404 (consecutive: $consecutive404s)")
                 // Stop if we get too many consecutive 404s
                 if (consecutive404s >= maxConsecutive404s) {
+                    println("[KdtScans] Reached $maxConsecutive404s consecutive 404s, stopping")
                     break
                 }
             } else if (response.isSuccessful) {
                 // Reset counter on successful response
                 consecutive404s = 0
+                println("[KdtScans] Image $imageIndex: SUCCESS ($statusCode)")
                 pages.add(
                     MangaPage(
                         id = generateUid(imageUrl),
@@ -292,6 +342,7 @@ internal class KdtScans(context: MangaLoaderContext) :
             } else {
                 // For other errors (403, 500, etc), treat as potential image
                 consecutive404s = 0
+                println("[KdtScans] Image $imageIndex: Other status $statusCode (treating as valid)")
                 pages.add(
                     MangaPage(
                         id = generateUid(imageUrl),
@@ -305,6 +356,7 @@ internal class KdtScans(context: MangaLoaderContext) :
             imageIndex++
         }
 
+        println("[KdtScans] Finished loading. Found ${pages.size} pages")
         return pages
     }
 

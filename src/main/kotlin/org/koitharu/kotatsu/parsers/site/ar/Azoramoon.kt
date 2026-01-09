@@ -78,19 +78,44 @@ internal class Azoramoon(context: MangaLoaderContext) :
 			}
 		}
 
+		println("[Azoramoon] Request URL: $url")
+
 		val response = webClient.httpGet(url)
 		val body = response.body.string()
 
+		println("[Azoramoon] Response code: ${response.code}")
+		println("[Azoramoon] Response body length: ${body.length}")
+		println("[Azoramoon] Response body preview (first 500 chars): ${body.take(500)}")
+
 		// Try to parse as JSONArray first (API returns direct array)
 		val jsonArray = try {
-			JSONArray(body)
+			val arr = JSONArray(body)
+			println("[Azoramoon] Successfully parsed as JSONArray with ${arr.length()} items")
+			arr
 		} catch (e: Exception) {
+			println("[Azoramoon] Failed to parse as JSONArray: ${e.message}")
 			// If that fails, try as JSONObject and extract array
-			val jsonObject = JSONObject(body)
-			when {
-				jsonObject.has("data") -> jsonObject.getJSONArray("data")
-				jsonObject.has("results") -> jsonObject.getJSONArray("results")
-				else -> JSONArray()
+			try {
+				val jsonObject = JSONObject(body)
+				val arr = when {
+					jsonObject.has("data") -> {
+						println("[Azoramoon] Found 'data' field in JSONObject")
+						jsonObject.getJSONArray("data")
+					}
+					jsonObject.has("results") -> {
+						println("[Azoramoon] Found 'results' field in JSONObject")
+						jsonObject.getJSONArray("results")
+					}
+					else -> {
+						println("[Azoramoon] No 'data' or 'results' field found")
+						JSONArray()
+					}
+				}
+				println("[Azoramoon] Extracted array with ${arr.length()} items")
+				arr
+			} catch (e2: Exception) {
+				println("[Azoramoon] Failed to parse as JSONObject: ${e2.message}")
+				JSONArray()
 			}
 		}
 
@@ -98,6 +123,7 @@ internal class Azoramoon(context: MangaLoaderContext) :
 	}
 
 	private fun parseMangaList(json: JSONArray): List<Manga> {
+		println("[Azoramoon] Parsing manga list with ${json.length()} items")
 		val result = mutableListOf<Manga>()
 
 		for (i in 0 until json.length()) {
@@ -106,6 +132,8 @@ internal class Azoramoon(context: MangaLoaderContext) :
 			val url = "/series/$slug"
 			val title = obj.getString("postTitle")
 			val coverUrl = obj.optString("featuredImage")
+
+			println("[Azoramoon] Manga $i: $title (slug: $slug)")
 
 			// Parse status
 			val seriesStatus = obj.optString("seriesStatus", "")
@@ -151,109 +179,110 @@ internal class Azoramoon(context: MangaLoaderContext) :
 			)
 		}
 
+		println("[Azoramoon] Parsed ${result.size} manga from API")
 		return result
 	}
 
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
-		// Hardcoded genre list from the API
+		// Hardcoded genre list from the API (swapping key and title as requested)
 		return setOf(
-			MangaTag("1", "أكشن", source),
-			MangaTag("2", "حريم", source),
-			MangaTag("3", "زمكاني", source),
-			MangaTag("4", "سحر", source),
-			MangaTag("5", "شونين", source),
-			MangaTag("6", "مغامرات", source),
-			MangaTag("7", "خيال", source),
-			MangaTag("8", "رومانسي", source),
-			MangaTag("9", "كوميدي", source),
-			MangaTag("10", "مانهوا", source),
-			MangaTag("11", "إثارة", source),
-			MangaTag("12", "دراما", source),
-			MangaTag("13", "تاريخي", source),
-			MangaTag("14", "راشد", source),
-			MangaTag("15", "سينين", source),
-			MangaTag("16", "خارق للطبيعة", source),
-			MangaTag("17", "شياطين", source),
-			MangaTag("18", "حياة مدرسية", source),
-			MangaTag("19", "جوسي", source),
-			MangaTag("20", "مانها", source),
-			MangaTag("21", "ويبتون", source),
-			MangaTag("22", "شينين", source),
-			MangaTag("23", "قوة خارقة", source),
-			MangaTag("24", "خيال علمي", source),
-			MangaTag("25", "غموض", source),
-			MangaTag("26", "مأساة", source),
-			MangaTag("27", "شريحة من الحياة", source),
-			MangaTag("28", "فنون قتالية", source),
-			MangaTag("29", "شوجو", source),
-			MangaTag("30", "ايسكاي", source),
-			MangaTag("31", "مصاصي الدماء", source),
-			MangaTag("32", "اسبوعي", source),
-			MangaTag("33", "لعبة", source),
-			MangaTag("34", "نفسي", source),
-			MangaTag("35", "وحوش", source),
-			MangaTag("36", "الحياة اليومية", source),
-			MangaTag("37", "الحياة المدرسية", source),
-			MangaTag("38", "رعب", source),
-			MangaTag("39", "عسكري", source),
-			MangaTag("40", "رياضي", source),
-			MangaTag("41", "اتشي", source),
-			MangaTag("42", "ايشي", source),
-			MangaTag("43", "دموي", source),
-			MangaTag("44", "زومبي", source),
-			MangaTag("45", "مميز", source),
-			MangaTag("46", "ايسيكاي", source),
-			MangaTag("47", "فنتازيا", source),
-			MangaTag("48", "اشباح", source),
-			MangaTag("49", "إعادة إحياء", source),
-			MangaTag("50", "بطل غير اعتيادي", source),
-			MangaTag("51", "ثأر", source),
-			MangaTag("52", "اثارة", source),
-			MangaTag("53", "تراجيدي", source),
-			MangaTag("54", "طبخ", source),
-			MangaTag("55", "تناسخ", source),
-			MangaTag("56", "عودة بالزمن", source),
-			MangaTag("57", "انتقام", source),
-			MangaTag("58", "تجسيد", source),
-			MangaTag("59", "فانتازيا", source),
-			MangaTag("60", "عائلي", source),
-			MangaTag("61", "تجسد", source),
-			MangaTag("62", "العاب", source),
-			MangaTag("63", "عالم اخر", source),
-			MangaTag("64", "السفر عبر الزمن", source),
-			MangaTag("65", "خيالي", source),
-			MangaTag("66", "زمنكاني", source),
-			MangaTag("67", "مغامرة", source),
-			MangaTag("68", "طبي", source),
-			MangaTag("69", "عصور وسطى", source),
-			MangaTag("70", "ساموراي", source),
-			MangaTag("71", "مافيا", source),
-			MangaTag("72", "نظام", source),
-			MangaTag("73", "هوس", source),
-			MangaTag("74", "عصري", source),
-			MangaTag("75", "بطل مجنون", source),
-			MangaTag("76", "رعاية اطفال", source),
-			MangaTag("77", "زواج مدبر", source),
-			MangaTag("78", "تشويق", source),
-			MangaTag("79", "مكتبي", source),
-			MangaTag("80", "قوى خارقه", source),
-			MangaTag("81", "تحقيق", source),
-			MangaTag("82", "أيتام", source),
-			MangaTag("83", "جوسين", source),
-			MangaTag("84", "موسيقي", source),
-			MangaTag("85", "قصة حقيقة", source),
-			MangaTag("86", "موريم", source),
-			MangaTag("87", "موظفين", source),
-			MangaTag("88", "فيكتوري", source),
-			MangaTag("89", "مأساوي", source),
-			MangaTag("90", "عصر حديث", source),
-			MangaTag("91", "ندم", source),
-			MangaTag("92", "حياة جامعية", source),
-			MangaTag("93", "حاصد", source),
-			MangaTag("94", "الأرواح", source),
-			MangaTag("95", "جريمة", source),
-			MangaTag("96", "عاطفي", source),
-			MangaTag("97", "أكاديمي", source),
+			MangaTag("أكشن", "1", source),
+			MangaTag("حريم", "2", source),
+			MangaTag("زمكاني", "3", source),
+			MangaTag("سحر", "4", source),
+			MangaTag("شونين", "5", source),
+			MangaTag("مغامرات", "6", source),
+			MangaTag("خيال", "7", source),
+			MangaTag("رومانسي", "8", source),
+			MangaTag("كوميدي", "9", source),
+			MangaTag("مانهوا", "10", source),
+			MangaTag("إثارة", "11", source),
+			MangaTag("دراما", "12", source),
+			MangaTag("تاريخي", "13", source),
+			MangaTag("راشد", "14", source),
+			MangaTag("سينين", "15", source),
+			MangaTag("خارق للطبيعة", "16", source),
+			MangaTag("شياطين", "17", source),
+			MangaTag("حياة مدرسية", "18", source),
+			MangaTag("جوسي", "19", source),
+			MangaTag("مانها", "20", source),
+			MangaTag("ويبتون", "21", source),
+			MangaTag("شينين", "22", source),
+			MangaTag("قوة خارقة", "23", source),
+			MangaTag("خيال علمي", "24", source),
+			MangaTag("غموض", "25", source),
+			MangaTag("مأساة", "26", source),
+			MangaTag("شريحة من الحياة", "27", source),
+			MangaTag("فنون قتالية", "28", source),
+			MangaTag("شوجو", "29", source),
+			MangaTag("ايسكاي", "30", source),
+			MangaTag("مصاصي الدماء", "31", source),
+			MangaTag("اسبوعي", "32", source),
+			MangaTag("لعبة", "33", source),
+			MangaTag("نفسي", "34", source),
+			MangaTag("وحوش", "35", source),
+			MangaTag("الحياة اليومية", "36", source),
+			MangaTag("الحياة المدرسية", "37", source),
+			MangaTag("رعب", "38", source),
+			MangaTag("عسكري", "39", source),
+			MangaTag("رياضي", "40", source),
+			MangaTag("اتشي", "41", source),
+			MangaTag("ايشي", "42", source),
+			MangaTag("دموي", "43", source),
+			MangaTag("زومبي", "44", source),
+			MangaTag("مميز", "45", source),
+			MangaTag("ايسيكاي", "46", source),
+			MangaTag("فنتازيا", "47", source),
+			MangaTag("اشباح", "48", source),
+			MangaTag("إعادة إحياء", "49", source),
+			MangaTag("بطل غير اعتيادي", "50", source),
+			MangaTag("ثأر", "51", source),
+			MangaTag("اثارة", "52", source),
+			MangaTag("تراجيدي", "53", source),
+			MangaTag("طبخ", "54", source),
+			MangaTag("تناسخ", "55", source),
+			MangaTag("عودة بالزمن", "56", source),
+			MangaTag("انتقام", "57", source),
+			MangaTag("تجسيد", "58", source),
+			MangaTag("فانتازيا", "59", source),
+			MangaTag("عائلي", "60", source),
+			MangaTag("تجسد", "61", source),
+			MangaTag("العاب", "62", source),
+			MangaTag("عالم اخر", "63", source),
+			MangaTag("السفر عبر الزمن", "64", source),
+			MangaTag("خيالي", "65", source),
+			MangaTag("زمنكاني", "66", source),
+			MangaTag("مغامرة", "67", source),
+			MangaTag("طبي", "68", source),
+			MangaTag("عصور وسطى", "69", source),
+			MangaTag("ساموراي", "70", source),
+			MangaTag("مافيا", "71", source),
+			MangaTag("نظام", "72", source),
+			MangaTag("هوس", "73", source),
+			MangaTag("عصري", "74", source),
+			MangaTag("بطل مجنون", "75", source),
+			MangaTag("رعاية اطفال", "76", source),
+			MangaTag("زواج مدبر", "77", source),
+			MangaTag("تشويق", "78", source),
+			MangaTag("مكتبي", "79", source),
+			MangaTag("قوى خارقه", "80", source),
+			MangaTag("تحقيق", "81", source),
+			MangaTag("أيتام", "82", source),
+			MangaTag("جوسين", "83", source),
+			MangaTag("موسيقي", "84", source),
+			MangaTag("قصة حقيقة", "85", source),
+			MangaTag("موريم", "86", source),
+			MangaTag("موظفين", "87", source),
+			MangaTag("فيكتوري", "88", source),
+			MangaTag("مأساوي", "89", source),
+			MangaTag("عصر حديث", "90", source),
+			MangaTag("ندم", "91", source),
+			MangaTag("حياة جامعية", "92", source),
+			MangaTag("حاصد", "93", source),
+			MangaTag("الأرواح", "94", source),
+			MangaTag("جريمة", "95", source),
+			MangaTag("عاطفي", "96", source),
+			MangaTag("أكاديمي", "97", source),
 		)
 	}
 
