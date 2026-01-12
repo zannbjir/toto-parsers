@@ -386,20 +386,9 @@ internal class Azoramoon(context: MangaLoaderContext) :
 				println("[Azoramoon] Raw chars after images: ${debugContext.map { it.code.toString(16) }.joinToString(" ")}")
 			}
 
-			// Try different patterns to see which one matches
-			val pattern1 = """\\\"images\\\":\[([\s\S]*?)\],\\\"team\""""
-			val pattern2 = """"images":\[([\s\S]*?)\],"team""""
-			val pattern3 = """\"images\":\[([\s\S]*?)\],\"team\""""
-
-			val match1 = Regex(pattern1).find(scriptContent)
-			val match2 = Regex(pattern2).find(scriptContent)
-			val match3 = Regex(pattern3).find(scriptContent)
-
-			println("[Azoramoon] Pattern1 (\\\\\\\"): ${match1 != null}")
-			println("[Azoramoon] Pattern2 (\"): ${match2 != null}")
-			println("[Azoramoon] Pattern3 (\\\"): ${match3 != null}")
-
-			val imagesMatch = match1 ?: match2 ?: match3
+			// The actual content has single backslash escaping: \"images\":
+			// In raw string, \" is backslash + quote (not an escaped quote)
+			val imagesMatch = Regex("""\"images\":\[([\s\S]*?)\],\"team\"""").find(scriptContent)
 			println("[Azoramoon] Script $index regex match: ${imagesMatch != null}")
 
 			if (imagesMatch != null) {
