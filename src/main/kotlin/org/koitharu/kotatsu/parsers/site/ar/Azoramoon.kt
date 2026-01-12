@@ -382,7 +382,7 @@ internal class Azoramoon(context: MangaLoaderContext) :
 				println("[Azoramoon] Context around images: ${scriptContent.substring(contextStart, contextEnd)}")
 			}
 
-			val imagesMatch = Regex("""\\\"images\\\":\[(.*?)\],\\\"team\"""").find(scriptContent)
+			val imagesMatch = Regex("""\\\"images\\\":\[([\s\S]*?)\],\\\"team\"""").find(scriptContent)
 			println("[Azoramoon] Script $index regex match: ${imagesMatch != null}")
 
 			if (imagesMatch != null) {
