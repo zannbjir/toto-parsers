@@ -426,12 +426,12 @@ internal class MangagoParser(context: MangaLoaderContext) :
         val key = findHexEncodedVariable(deobfChapterJs, "key").decodeHex()
         val iv = findHexEncodedVariable(deobfChapterJs, "iv").decodeHex()
 
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val cipher = Cipher.getInstance("AES/CBC/NoPadding")
         val keySpec = SecretKeySpec(key, "AES")
         cipher.init(Cipher.DECRYPT_MODE, keySpec, IvParameterSpec(iv))
         val decryptedBytes = cipher.doFinal(imgsrcs)
 
-        var imageList = String(decryptedBytes, Charsets.UTF_8).trimEnd('\u0000').trim()
+        var imageList = String(decryptedBytes, Charsets.UTF_8).trimEnd('\u0000')
         imageList = unscrambleImageList(imageList, deobfChapterJs)
 
         val images = imageList.split(",")
@@ -551,20 +551,30 @@ internal class MangagoParser(context: MangaLoaderContext) :
         try {
             val keyLocations = KEY_LOCATION_REGEX.findAll(js)
                 .map { it.groupValues[1].toInt() }
-                .distinct()
                 .toList()
+
+            println("[MANGAGO] Unscramble: found ${keyLocations.size} key locations")
+            println("[MANGAGO] Unscramble: original image list length = ${imgList.length}")
+            println("[MANGAGO] Unscramble: keyLocations = $keyLocations")
 
             val unscrambleKey = keyLocations.map {
                 imgList[it].toString().toInt()
-            }
+            }.toList()
+
+            println("[MANGAGO] Unscramble: extracted key = $unscrambleKey")
 
             keyLocations.forEachIndexed { idx, it ->
                 imgList = imgList.removeRange(it - idx..it - idx)
             }
 
+            println("[MANGAGO] Unscramble: after removing chars, length = ${imgList.length}")
+            println("[MANGAGO] Unscramble: first 200 chars = ${imgList.take(200)}")
+
             imgList = imgList.unscramble(unscrambleKey)
-        } catch (e: NumberFormatException) {
-            // List is already unscrambled
+
+            println("[MANGAGO] Unscramble: final length = ${imgList.length}")
+        } catch (e: Exception) {
+            println("[MANGAGO] Unscramble: failed - ${e.message}, using original list")
         }
         return imgList
     }
