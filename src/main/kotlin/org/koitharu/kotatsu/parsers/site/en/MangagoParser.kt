@@ -432,6 +432,10 @@ internal class MangagoParser(context: MangaLoaderContext) :
         val decryptedBytes = cipher.doFinal(imgsrcs)
 
         var imageList = String(decryptedBytes, Charsets.UTF_8).trimEnd('\u0000')
+        println("[MANGAGO] Decrypted raw string (first 200 chars): ${imageList.take(200)}")
+        println("[MANGAGO] Decrypted string length: ${imageList.length}")
+        println("[MANGAGO] Number of commas in decrypted string: ${imageList.count { it == ',' }}")
+
         imageList = unscrambleImageList(imageList, deobfChapterJs)
 
         val images = imageList.split(",")
