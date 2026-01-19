@@ -377,11 +377,7 @@ internal class MangagoParser(context: MangaLoaderContext) :
 
         // Decrypt images from this specific page
         val images = decryptImageList(doc, page.url)
-
-        if (pageNumber < 1 || pageNumber > images.size) {
-            throw Exception("Page number $pageNumber out of bounds (1-${images.size})")
-        }
-
+        
         val imageUrl = images[pageNumber - 1]
 
         if (imageUrl.isBlank()) {
