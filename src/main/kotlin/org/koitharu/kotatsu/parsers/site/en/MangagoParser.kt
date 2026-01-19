@@ -571,38 +571,22 @@ internal class MangagoParser(context: MangaLoaderContext) :
         println("[MANGAGO] Unscramble: keyLocations = $keyLocations")
         println("[MANGAGO] Unscramble: first 100 chars of original: ${imgList.take(100)}")
 
-        // Log characters at each key location for debugging
-        keyLocations.forEach { loc ->
+        val unscrambleKey = keyLocations.mapNotNull { loc ->
             if (loc < imgList.length) {
                 val char = imgList[loc]
-                val isDigit = char.isDigit()
-                val charCode = char.code
-                println("[MANGAGO] Unscramble: position $loc = '$char' (code: $charCode, digit: $isDigit)")
+                println("[MANGAGO] Unscramble: position $loc = '$char' (code: ${char.code})")
+                char.code
             } else {
                 println("[MANGAGO] Unscramble: position $loc is beyond string length ${imgList.length}")
+                null
             }
-        }
-
-        // Check if characters at key locations are digits (required for unscrambling)
-        val validKeyLocations = keyLocations.filter { loc ->
-            loc < imgList.length && imgList[loc].isDigit()
-        }
-
-        if (validKeyLocations.isEmpty()) {
-            println("[MANGAGO] Unscramble: no valid digit keys at positions, returning as-is")
-            println("[MANGAGO] Unscramble: string before split: ${imgList.take(500)}")
-            return imgList
-        }
-
-        val unscrambleKey = validKeyLocations.map { loc ->
-            imgList[loc].toString().toInt()
         }.toList()
 
         println("[MANGAGO] Unscramble: extracted key = $unscrambleKey")
 
-        // Remove characters from highest to lowest index to avoid index shift
-        validKeyLocations.sortedDescending().forEach { loc ->
-            imgList = imgList.removeRange(loc..loc)
+        // Remove characters - need to account for index shifts as we remove characters
+        keyLocations.filter { it < imgList.length }.forEachIndexed { idx, loc ->
+            imgList = imgList.removeRange((loc - idx)..(loc - idx))
         }
 
         println("[MANGAGO] Unscramble: after removing chars, length = ${imgList.length}")
