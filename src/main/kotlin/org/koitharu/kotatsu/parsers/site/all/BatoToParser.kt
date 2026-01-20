@@ -20,15 +20,15 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 
 @Broken
-@MangaSourceParser("BATO", "Bato")
+@MangaSourceParser("XBATCAT", "XBatCat")
 internal class BatoToV4Parser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.BATO, 36) {
+    PagedMangaParser(context, MangaParserSource.XBATCAT, 36) {
 
     override val configKeyDomain = ConfigKey.Domain(
-        "bato.si",
-        "battwo.com",
-        "bato.to",
-        "bato.ing"
+        "xcat.tv",
+        "xcat.si",
+        "xcat.io",
+        "xcat.la"
     )
 
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
