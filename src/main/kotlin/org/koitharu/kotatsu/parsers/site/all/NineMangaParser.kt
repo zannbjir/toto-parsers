@@ -186,13 +186,6 @@ internal abstract class NineMangaParser(
 
         val response = webClient.httpGet(url, headers)
         val doc = followJavaScriptRedirect(response, headers)
-        var finalUrl = response.request.url.toString()
-
-        // Check if the final URL lacks the correct domain and reconstruct it
-        if (!finalUrl.contains(domain, ignoreCase = true)) {
-            val path = response.request.url.encodedPath
-            finalUrl = "https://$domain$path"
-        }
 
         // Try to extract images from JavaScript first (for redirected pages)
         val jsImageUrls = extractImagesFromJavaScript(doc)
@@ -217,6 +210,7 @@ internal abstract class NineMangaParser(
             ?: throw ParseException("Page count not found", chapter.url)
 
         // Generate multi-image page URLs (each contains ~10 images)
+        val baseUrl = chapter.url.toAbsoluteUrl(domain)
         val allPageUrls = mutableListOf<String>()
 
         // Each page contains 10 images, calculate how many pages we need
@@ -225,14 +219,14 @@ internal abstract class NineMangaParser(
 
         for (pageNum in 1..totalPages) {
             // Generate URL: chapter-id-10-pageNumber.html (each page has 10 images)
-            allPageUrls.add(finalUrl.replace(".html", "-10-$pageNum.html"))
+            allPageUrls.add(baseUrl.replace(".html", "-10-$pageNum.html"))
         }
 
         val allPages = mutableListOf<MangaPage>()
 
         // Process all page URLs to collect images in order
         for (pageUrl in allPageUrls) {
-            val pageDoc = if (pageUrl == finalUrl) {
+            val pageDoc = if (pageUrl == chapter.url.toAbsoluteUrl(domain)) {
                 doc // Use already loaded first page
             } else {
                 try {
@@ -356,11 +350,16 @@ internal abstract class NineMangaParser(
         // Check if we've been redirected to a source selection page
         val responseUrl = response.request.url.host
         if (!responseUrl.contains("ninemanga", ignoreCase = true)) {
-            // Look for source selection buttons
-            val sourceLink = doc.selectFirst("a.vision-button[href*=esninemanga], a.cool-blue[href*=esninemanga]")?.attr("href")
+            // Look for source selection buttons - support all ninemanga language variants
+            val sourceLink = doc.selectFirst("a.vision-button[href*=ninemanga], a.cool-blue[href*=ninemanga]")?.attr("href")
             if (sourceLink != null) {
                 // Clean up the URL (remove &amp; and replace with &)
-                val cleanUrl = sourceLink.replace("&amp;", "&")
+                var cleanUrl = sourceLink.replace("&amp;", "&")
+
+                // If it's a relative URL, make it absolute using the domain
+                if (!cleanUrl.startsWith("http")) {
+                    cleanUrl = "https://$domain$cleanUrl"
+                }
 
                 // Follow the source redirect
                 val sourceResponse = webClient.httpGet(cleanUrl, headers)

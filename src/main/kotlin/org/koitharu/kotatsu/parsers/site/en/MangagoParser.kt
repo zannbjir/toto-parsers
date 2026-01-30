@@ -262,15 +262,41 @@ internal class MangagoParser(context: MangaLoaderContext) :
     }
 
     private fun buildChapterList(chapters: List<ChapterParseData>): List<MangaChapter> {
+        // Count scanlator occurrences to determine the most common one
+        val scanlatorCounts = mutableMapOf<String, Int>()
+        for (chapter in chapters) {
+            val scanlator = chapter.scanlator ?: extractTitleSuffix(chapter.name) ?: continue
+            scanlatorCounts[scanlator] = (scanlatorCounts[scanlator] ?: 0) + 1
+        }
+        val preferredScanlator = scanlatorCounts.maxByOrNull { it.value }?.key
+
         val regularChapters = mutableMapOf<Float, ChapterParseData>()
         val specialChapters = mutableListOf<ChapterParseData>()
 
         for (chapter in chapters) {
             val chapterNum = extractChapterNumber(chapter.name)
             if (chapterNum != null) {
-                // Keep first occurrence for each chapter number (deduplication)
-                if (!regularChapters.containsKey(chapterNum)) {
+                val existing = regularChapters[chapterNum]
+                if (existing == null) {
                     regularChapters[chapterNum] = chapter
+                } else {
+                    // Prefer the chapter from the most common scanlator for consistency
+                    val existingSource = existing.scanlator ?: extractTitleSuffix(existing.name)
+                    val newSource = chapter.scanlator ?: extractTitleSuffix(chapter.name)
+
+                    val existingIsPreferred = existingSource == preferredScanlator
+                    val newIsPreferred = newSource == preferredScanlator
+
+                    if (newIsPreferred && !existingIsPreferred) {
+                        regularChapters[chapterNum] = chapter
+                    } else if (!newIsPreferred && existingIsPreferred) {
+                        // Keep existing
+                    } else {
+                        // Same source priority, prefer longer title
+                        if (chapter.name.length > existing.name.length) {
+                            regularChapters[chapterNum] = chapter
+                        }
+                    }
                 }
             } else {
                 // Non-standard chapters (Special, Extra, etc.) go to special list
@@ -317,6 +343,12 @@ internal class MangagoParser(context: MangaLoaderContext) :
         }
 
         return result
+    }
+
+    private fun extractTitleSuffix(title: String): String? {
+        // Extract suffix like "Official" from "Ch.40 : Official" or "Good Translations" from "Ch.41 : Good Translations"
+        val regex = Regex("""(?:ch\.?|chapter)\s*\d+(?:\.\d+)?\s*[:\-]\s*(.+)""", RegexOption.IGNORE_CASE)
+        return regex.find(title)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun extractChapterNumber(title: String): Float? {
