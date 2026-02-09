@@ -315,16 +315,18 @@ internal class Komikcast(context: MangaLoaderContext) :
 
 			for (i in 0 until dataArray.length()) {
 				val chapterObj = dataArray.getJSONObject(i)
-				val chapterId = chapterObj.getInt("id")
 				val chapterData = chapterObj.getJSONObject("data")
 				val chapterIndex = chapterData.getDouble("index")
 				val chapterSlug = chapterData.optString("slug").takeIf { it.isNotEmpty() && it != "null" }
-				val chapterIdentifier = chapterSlug ?: chapterId.toString()
+				val chapterIndexStr = if (chapterIndex % 1.0 == 0.0) chapterIndex.toInt().toString() else chapterIndex.toString()
+				val chapterIdentifier = chapterSlug ?: chapterIndexStr
 				val chapterUrl = "/series/$slug/chapters/$chapterIdentifier"
+
+				val chapterTitle = chapterData.optString("title").takeIf { it.isNotEmpty() && it != "null" } ?: "Chapter $chapterIndexStr"
 
 				val chapter = MangaChapter(
 					id = generateUid(chapterUrl),
-					title = chapterData.optString("title"),
+					title = chapterTitle,
 					url = chapterUrl,
 					number = chapterIndex.toFloat(),
 					volume = 0,
