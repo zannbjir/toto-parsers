@@ -10,8 +10,10 @@ import org.koitharu.kotatsu.parsers.util.parseJson
 import org.koitharu.kotatsu.parsers.util.parseHtml
 import org.koitharu.kotatsu.parsers.util.src
 import org.koitharu.kotatsu.parsers.util.toAbsoluteUrl
+import org.koitharu.kotatsu.parsers.util.urlEncoded
 import org.koitharu.kotatsu.parsers.util.json.getStringOrNull
 import org.koitharu.kotatsu.parsers.util.json.mapJSON
+import org.koitharu.kotatsu.parsers.util.json.mapJSONNotNull
 
 @MangaSourceParser("NYXSCANS", "Nyx Scans", "en")
 internal class NyxScans(context: MangaLoaderContext) :
@@ -30,7 +32,7 @@ internal class NyxScans(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val apiPages = runCatching { parsePagesFromApi(chapter.id) }.getOrElse { error ->
+		val apiPages = runCatching { parsePagesFromApi(chapter) }.getOrElse { error ->
 			if (error.message?.contains("unlock", ignoreCase = true) == true) {
 				throw error
 			}
@@ -57,22 +59,61 @@ internal class NyxScans(context: MangaLoaderContext) :
 		}
 	}
 
-	private suspend fun parsePagesFromApi(chapterId: Long): List<MangaPage> {
+	private suspend fun parsePagesFromApi(chapter: MangaChapter): List<MangaPage> {
+		readChapterImages(chapter.id).takeIf { it.isNotEmpty() }?.let { return it }
+		val pathParts = chapter.url.substringBefore('?').trim('/').split('/')
+		if (pathParts.size < 3 || pathParts[0] != "series") return emptyList()
+		val seriesSlug = pathParts[1]
+		val chapterSlug = pathParts[2]
+		val postId = findPostIdBySlug(seriesSlug) ?: return emptyList()
+		val chaptersJson = webClient.httpGet(
+			"https://$defaultDomain/api/chapters?postId=$postId&skip=0&take=900&order=desc&userid=",
+		).parseJson()
+		val chapterId = chaptersJson.optJSONObject("post")
+			?.optJSONArray("chapters")
+			?.mapJSONNotNull { item ->
+				if (item.optString("slug") == chapterSlug) {
+					item.optLong("id", 0L).takeIf { it > 0L }
+				} else {
+					null
+				}
+			}
+			?.firstOrNull()
+			?: return emptyList()
+		return readChapterImages(chapterId)
+	}
+
+	private suspend fun findPostIdBySlug(seriesSlug: String): Long? {
+		val json = webClient.httpGet(
+			"https://$defaultDomain/api/query?page=1&perPage=5&searchTerm=${seriesSlug.urlEncoded()}",
+		).parseJson()
+		return json.optJSONArray("posts")
+			?.mapJSONNotNull { post ->
+				if (post.optString("slug") == seriesSlug) {
+					post.optLong("id", 0L).takeIf { it > 0L }
+				} else {
+					null
+				}
+			}
+			?.firstOrNull()
+	}
+
+	private suspend fun readChapterImages(chapterId: Long): List<MangaPage> {
+		if (chapterId <= 0L) return emptyList()
 		val json = webClient.httpGet("https://$defaultDomain/api/chapter?chapterId=$chapterId").parseJson()
-		val chapter = json.optJSONObject("chapter") ?: return emptyList()
-		if (chapter.optBoolean("isLocked", false)) {
+		val chapterJson = json.optJSONObject("chapter") ?: return emptyList()
+		if (chapterJson.optBoolean("isLocked", false)) {
 			throw Exception("Need to unlock chapter!")
 		}
-		val images = chapter.optJSONArray("images")?.mapNotNull { item ->
-			when (item) {
-				is String -> item.takeIf { it.isNotBlank() }
-				is org.json.JSONObject -> item.optString("url")
+		val images = chapterJson.optJSONArray("images")
+			?.mapJSONNotNull { item ->
+				item.optString("url")
 					.ifBlank { item.optString("src") }
 					.ifBlank { item.optString("image") }
+					.replace("/public//", "/public/")
 					.takeIf { it.isNotBlank() }
-				else -> null
 			}
-		}.orEmpty()
+			.orEmpty()
 		return images.map { url ->
 			MangaPage(
 				id = generateUid(url),
