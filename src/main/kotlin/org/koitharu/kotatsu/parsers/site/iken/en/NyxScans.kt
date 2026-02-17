@@ -1,6 +1,7 @@
 package org.koitharu.kotatsu.parsers.site.iken.en
 
 import org.json.JSONArray
+import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.*
@@ -12,7 +13,6 @@ import org.koitharu.kotatsu.parsers.util.src
 import org.koitharu.kotatsu.parsers.util.toAbsoluteUrl
 import org.koitharu.kotatsu.parsers.util.urlEncoded
 import org.koitharu.kotatsu.parsers.util.json.getStringOrNull
-import org.koitharu.kotatsu.parsers.util.json.mapJSON
 import org.koitharu.kotatsu.parsers.util.json.mapJSONNotNull
 
 @MangaSourceParser("NYXSCANS", "Nyx Scans", "en")
@@ -29,6 +29,10 @@ internal class NyxScans(context: MangaLoaderContext) :
 			}
 		}
 		return super.getListPage(page, order, filter)
+	}
+
+	override fun parseMangaList(json: JSONObject): List<Manga> {
+		return super.parseMangaList(json).filterNot { isBlockedTitle(it.title) }
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
@@ -126,14 +130,16 @@ internal class NyxScans(context: MangaLoaderContext) :
 
 	private suspend fun parsePopularManga(): List<Manga> {
 		val json = webClient.httpGet("https://$domain").parseHtml().getNextJson("popularPosts")
-		return JSONArray(json).mapJSON {
+		return JSONArray(json).mapJSONNotNull {
+			val title = it.getString("postTitle")
+			if (isBlockedTitle(title)) return@mapJSONNotNull null
 			val url = "/series/${it.getString("slug")}"
 			Manga(
 				id = it.getLong("id"),
 				url = url,
 				publicUrl = url.toAbsoluteUrl(domain),
 				coverUrl = it.getStringOrNull("featuredImage"),
-				title = it.getString("postTitle"),
+				title = title,
 				altTitles = emptySet(),
 				description = null,
 				rating = RATING_UNKNOWN,
@@ -144,5 +150,9 @@ internal class NyxScans(context: MangaLoaderContext) :
 				contentRating = null,
 			)
 		}
+	}
+
+	private fun isBlockedTitle(title: String): Boolean {
+		return title.contains("[Novel]", ignoreCase = true)
 	}
 }
