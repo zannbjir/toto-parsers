@@ -8,7 +8,7 @@ import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 
 @MangaSourceParser("BACAKOMIK", "BacaKomik", "id")
 internal class BacaKomik(context: MangaLoaderContext) :
-    MangaReaderParser(context, MangaParserSource.BACAKOMIK, "bacakomik.my") {
+    MangaReaderParser(context, MangaParserSource.BACAKOMIK, "bacakomik.my", pageSize = 20, searchPageSize = 20) {
     
     override val listUrl = "/daftar-komik/"
     override val selectMangaList = "div.listupd div.bs"
