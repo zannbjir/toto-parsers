@@ -52,7 +52,7 @@ internal class SoftKomik(context: MangaLoaderContext) :
         val urlBuilder = "https://$domain/komik/list".toHttpUrl().newBuilder()
         urlBuilder.addQueryParameter("page", page.toString())
 
-        query.criteria.forEach { criterion ->
+        for (criterion in query.criteria) {
             when (criterion) {
                 is Match<*> -> {
                     if (criterion.field == TITLE_NAME) {
@@ -61,18 +61,19 @@ internal class SoftKomik(context: MangaLoaderContext) :
                 }
                 is Include<*> -> {
                     if (criterion.field == TAG) {
-                        criterion.values.firstOrNull()?.let {
-                            urlBuilder.addQueryParameter("genre", (it as MangaTag).key)
+                        val first = criterion.values.firstOrNull() as? MangaTag
+                        if (first != null) {
+                            urlBuilder.addQueryParameter("genre", first.key)
                         }
                     }
                 }
-                else -> {}
+                else -> Unit
             }
         }
 
         when (query.order ?: defaultSortOrder) {
             SortOrder.NEWEST -> urlBuilder.addQueryParameter("sort", "newest")
-            else             
+            else             -> Unit
         }
 
         val doc = webClient.httpGet(urlBuilder.build().toString()).parseHtml()
@@ -85,7 +86,7 @@ internal class SoftKomik(context: MangaLoaderContext) :
             val title = el.selectFirst("img")?.attr("alt")?.trim()
                 ?: el.text().trim().takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null
-            val coverUrl = decodeNextImageUrl(el.selectFirst("img")?.attr("src") ?: "")
+            val coverUrl = decodeNextImageUrl(el.selectFirst("img")?.attr("src").orEmpty())
             Manga(
                 id        = generateUid(href),
                 url       = href,
@@ -111,19 +112,19 @@ internal class SoftKomik(context: MangaLoaderContext) :
         val author = doc.select("td")
             .firstOrNull { it.text().trim() == "Author" }
             ?.nextElementSibling()?.text()?.trim()
-        val authors = setOfNotNull(author).filter { it.isNotBlank() }.toSet()
+        val authors = if (!author.isNullOrBlank()) setOf(author) else emptySet()
 
         val statusText = doc.select("td")
             .firstOrNull { it.text().trim() == "Status" }
-            ?.nextElementSibling()?.text()?.lowercase()?.trim()
+            ?.nextElementSibling()?.text()?.lowercase().orEmpty()
         val state = when {
-            statusText?.contains("ongoing")  == true -> MangaState.ONGOING
-            statusText?.contains("complete") == true -> MangaState.FINISHED
-            statusText?.contains("hiatus")   == true -> MangaState.PAUSED
-            else -> null
+            "ongoing"  in statusText -> MangaState.ONGOING
+            "complete" in statusText -> MangaState.FINISHED
+            "hiatus"   in statusText -> MangaState.PAUSED
+            else                     -> null
         }
 
-        val tags = doc.select("a[href*='/komik/genre/']").mapToSet { el ->
+        val tags = doc.select("a[href*='/komik/genre/']").mapToSet { el: Element ->
             MangaTag(
                 title  = el.text().trim(),
                 key    = el.attr("href").substringAfterLast("/"),
@@ -156,19 +157,17 @@ internal class SoftKomik(context: MangaLoaderContext) :
     private fun fetchChapterList(manga: Manga, doc: Document): List<MangaChapter> {
         val nextData = doc.selectFirst("script#__NEXT_DATA__")?.data()
             ?: return emptyList()
-
         val mangaSlug = manga.url.trimStart('/')
         val pattern = Regex(""""(/$mangaSlug/chapter/[^"]+)"""")
         val urls = pattern.findAll(nextData).map { it.groupValues[1] }.distinct().toList()
         if (urls.isEmpty()) return emptyList()
-
         return urls.mapIndexed { index, url ->
-            val chapterSlug = url.substringAfterLast("/")
-            val number = chapterSlug.filter { it.isDigit() || it == '.' }.toFloatOrNull()
+            val slug = url.substringAfterLast("/")
+            val number = slug.filter { it.isDigit() || it == '.' }.toFloatOrNull()
                 ?: (index + 1).toFloat()
             MangaChapter(
                 id         = generateUid(url),
-                title      = "Chapter $chapterSlug",
+                title      = "Chapter $slug",
                 number     = number,
                 volume     = 0,
                 url        = url,
@@ -203,7 +202,6 @@ internal class SoftKomik(context: MangaLoaderContext) :
             val imageUrls = Regex(
                 """"(https://[^"]*(?:softdevices|softkomik)[^"]*\.(?:jpg|jpeg|png|webp|avif)(?:\?[^"]*)?)"[,\s}]"""
             ).findAll(nextData).map { it.groupValues[1] }.distinct().toList()
-
             if (imageUrls.isNotEmpty()) {
                 return imageUrls.mapIndexed { i, url ->
                     MangaPage(
@@ -215,6 +213,7 @@ internal class SoftKomik(context: MangaLoaderContext) :
                 }
             }
         }
+
         return emptyList()
     }
 
