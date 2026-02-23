@@ -145,7 +145,7 @@ internal class YomuMangas(context: MangaLoaderContext) :
 			tags = if (parsed.tags.isNotEmpty()) parsed.tags else manga.tags,
 			authors = if (parsed.authors.isNotEmpty()) parsed.authors else manga.authors,
 			state = parsed.state ?: manga.state,
-			contentRating = parsed.contentRating ?: manga.contentRating,
+			contentRating = parsed.contentRating,
 			chapters = chapters,
 		)
 	}
@@ -203,7 +203,7 @@ internal class YomuMangas(context: MangaLoaderContext) :
 				branch = null,
 				source = source,
 			)
-		}.sortedByDescending { it.number }
+		}.sortedBy { it.number }
 	}
 
 	private fun resolveChapterUrl(
@@ -212,26 +212,28 @@ internal class YomuMangas(context: MangaLoaderContext) :
 		seriesId: Int,
 		seriesUrl: String?,
 	): String? {
-		val direct = normalizeMangaUrl(
-			chapter.getStringOrNull("url")
-				?: chapter.getStringOrNull("path")
-				?: chapter.getStringOrNull("chapterUrl"),
-		)
-		if (!direct.isNullOrBlank()) {
-			return direct
-		}
+		val normalizedSlug = seriesSlug
+			?.trim()
+			?.takeIf { it.isNotBlank() }
+			?: seriesUrl
+				?.substringAfter("/mangas/", "")
+				?.split('/')
+				?.getOrNull(1)
+				?.trim()
+				?.takeIf { it.isNotBlank() }
+			?: return null
 
-		val chapterSlug = chapter.getStringOrNull("slug")
-		if (!chapterSlug.isNullOrBlank() && !seriesSlug.isNullOrBlank()) {
-			return "/mangas/$seriesSlug/$seriesId/$chapterSlug"
-		}
+		val chapterSegment = chapter.opt("chapter")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+			?: chapter.optString("number").trim().takeIf { it.isNotEmpty() }
+			?: chapter.optString("slug").trim().takeIf { it.isNotEmpty() }
+			?: chapter.opt("id")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+			?: return null
 
-		val chapterId = chapter.optInt("id", 0)
-		if (chapterId > 0 && !seriesSlug.isNullOrBlank()) {
-			return "/mangas/$seriesSlug/$seriesId/$chapterId"
-		}
+		val normalizedChapter = chapterSegment
+			.replace(',', '.')
+			.removeSuffix(".0")
 
-		return seriesUrl?.takeIf { it.isNotBlank() }
+		return "/mangas/$seriesId/$normalizedSlug/$normalizedChapter"
 	}
 
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
@@ -279,15 +281,14 @@ internal class YomuMangas(context: MangaLoaderContext) :
 	private fun parseMangaFromSeries(series: JSONObject, fallbackUrl: String? = null): Manga? {
 		val id = series.getLongOrDefault("id", 0L)
 		val slug = series.getStringOrNull("slug")
-		val url = normalizeMangaUrl(
-			series.getStringOrNull("url")
-				?: series.getStringOrNull("path")
-				?: slug?.let { s ->
-					val suffix = if (id > 0L) "/$id" else ""
-					"/mangas/$s$suffix"
-				}
-				?: fallbackUrl,
-		) ?: return null
+		val url = when {
+			id > 0L && !slug.isNullOrBlank() -> "/mangas/$id/$slug"
+			else -> normalizeMangaUrl(
+				series.getStringOrNull("url")
+					?: series.getStringOrNull("path")
+					?: fallbackUrl,
+			) ?: return null
+		}
 
 		val tags = parseSeriesTags(series)
 
@@ -317,7 +318,6 @@ internal class YomuMangas(context: MangaLoaderContext) :
 			?.uppercase(Locale.ROOT)
 
 		val isAdult = series.getBooleanOrDefault("nsfw", false) ||
-			series.getBooleanOrDefault("adult", false) ||
 			series.getBooleanOrDefault("hentai", false)
 
 		return Manga(
@@ -424,10 +424,10 @@ internal class YomuMangas(context: MangaLoaderContext) :
 		if (manga.id > 0L && manga.id < 1_000_000_000_000L) {
 			return manga.id
 		}
-		val fromUrl = manga.url
-			.substringAfterLast('/')
+		val fromUrl = manga.url.substringAfter("/mangas/", "")
+			.substringBefore('/')
 			.toLongOrNull()
-			?: manga.url.substringAfterLast("/mangas/").substringBefore('/').toLongOrNull()
+			?: manga.url.substringAfterLast('/').toLongOrNull()
 		return fromUrl ?: error("Cannot extract manga ID from ${manga.url}")
 	}
 
