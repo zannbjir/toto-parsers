@@ -1,6 +1,7 @@
 package org.koitharu.kotatsu.parsers.site.ru
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
@@ -368,7 +369,7 @@ internal class SenkuroParser(context: MangaLoaderContext) :
 		val payload = JSONObject()
 			.put("query", query)
 			.put("variables", variables)
-		val response = webClient.httpPost(graphQlEndpoint, payload, getRequestHeaders()).parseJson()
+		val response = webClient.httpPost(graphQlEndpoint.toHttpUrl(), payload, getRequestHeaders()).parseJson()
 		val errors = response.optJSONArray("errors")
 		if (errors != null && errors.length() != 0) {
 			throw ParseException(errors.toString(), graphQlEndpoint)
