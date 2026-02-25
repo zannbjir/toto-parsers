@@ -12,15 +12,14 @@ import org.koitharu.kotatsu.parsers.model.MangaListFilterCapabilities
 import org.koitharu.kotatsu.parsers.model.MangaListFilterOptions
 import org.koitharu.kotatsu.parsers.model.MangaPage
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
-import org.koitharu.kotatsu.parsers.model.MangaSortOrder
+import org.koitharu.kotatsu.parsers.model.SortOrder
 import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 import org.koitharu.kotatsu.parsers.util.*
-import java.util.Calendar
 import java.util.Locale
 
-@MangaSourceParser("yurilab", "YuriLab", "id", ContentType.HENTAI)
+@MangaSourceParser("YURILAB", "YuriLab", "id", ContentType.HENTAI)
 internal class YuriLab(context: MangaLoaderContext) :
-	MangaReaderParser(context, MangaParserSource.YURILAB, "yurilabs.my.id", pageSize = 20) {
+	MangaReaderParser(context, MangaParserSource.YURILAB, "yurilabs.my.id", pageSize = 20, searchPageSize = 10) {
 
 	override val listUrl = "/series"
 	override val selectMangaList = "div.manga__item"
@@ -38,7 +37,7 @@ internal class YuriLab(context: MangaLoaderContext) :
 		availableContentTypes = emptySet(),
 	)
 
-	override suspend fun getListPage(page: Int, order: MangaSortOrder, filter: MangaListFilter): List<Manga> {
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val url = "https://$domain$listUrl".toHttpUrl().newBuilder().apply {
 			if (page > 1) addPathSegment("page").addPathSegment(page.toString())
 			if (filter.query != null) addQueryParameter("s", filter.query)
