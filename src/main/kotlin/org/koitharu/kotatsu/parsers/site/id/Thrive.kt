@@ -19,6 +19,7 @@ internal class Thrive(context: MangaLoaderContext) :
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Referer", "https://$domain/")
+        .add("Accept", "application/json")
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .build()
 
@@ -41,11 +42,11 @@ internal class Thrive(context: MangaLoaderContext) :
 
         val doc = webClient.httpGet(url).parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
-        val json = JSONObject(scriptData)
-        val props = json.getJSONObject("props").getJSONObject("pageProps")
+        val props = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps")
+       
         val dataArray = props.optJSONArray("terbaru") 
+            ?: props.optJSONArray("thrive") 
             ?: props.optJSONArray("results") 
-            ?: props.optJSONArray("thrive")
             ?: return emptyList()
 
         return dataArray.mapJSON { jo ->
@@ -70,15 +71,15 @@ internal class Thrive(context: MangaLoaderContext) :
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.publicUrl).parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return manga
+        val props = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps")
         
-        val json = JSONObject(scriptData)
-        val titleData = json.getJSONObject("props").getJSONObject("pageProps").getJSONObject("title")
+        val titleObj = props.optJSONObject("title") ?: return manga
 
-        val chapters = titleData.optJSONArray("chapters")?.mapJSON { ch ->
+        val chapters = titleObj.optJSONArray("chapters")?.mapJSON { ch ->
             val chId = ch.getString("id")
             MangaChapter(
                 id = generateUid(chId),
-                title = ch.optString("title").ifEmpty { "Chapter ${ch.optString("number")}" },
+                title = "Chapter ${ch.optString("number")}",
                 url = "/read/$chId",
                 number = ch.optString("number").toFloatOrNull() ?: 0f,
                 volume = 0, scanlator = null, uploadDate = 0L, branch = null, source = source
@@ -86,7 +87,7 @@ internal class Thrive(context: MangaLoaderContext) :
         } ?: emptyList()
 
         return manga.copy(
-            description = titleData.optString("description"),
+            description = titleObj.optString("description"),
             chapters = chapters.reversed()
         )
     }
@@ -94,19 +95,18 @@ internal class Thrive(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain${chapter.url}").parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
+        val chapterData = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps").getJSONObject("chapter")
         
-        val json = JSONObject(scriptData)
-        val chapterData = json.getJSONObject("props").getJSONObject("pageProps").getJSONObject("chapter")
-        val pages = chapterData.getJSONArray("pages")
-
-        return pages.mapJSON { p ->
+        return chapterData.getJSONArray("pages").mapJSON { p ->
             val imageUrl = p.getString("url")
             MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source)
         }
     }
 
     private fun fetchTags(): Set<MangaTag> = setOf(
-        "Action", "Adventure", "Boys' Love", "Comedy", "Crime", "Drama", "Fantasy", 
+        "Action", "Adventure", "Boys' Love", "Comedy", "Crime", "Drama", "Fantasy", "Girls' Love", "Historical", "Horror", "Isekai"
+    ).map { MangaTag(it.lowercase().replace(" ", "-"), it, source) }.toSet()
+}
         "Girls' Love", "Historical", "Horror", "Isekai", "Mecha", "Medical", 
         "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", 
         "Superhero", "Thriller", "Tragedy"
