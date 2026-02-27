@@ -17,16 +17,17 @@ internal class Manhwaku(context: MangaLoaderContext) :
     override val configKeyDomain = ConfigKey.Domain("www.manhwaku.biz.id")
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
-        .add("referer", "https://$domain/")
+        .add("Referer", "https://$domain/")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .build()
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
     override suspend fun getFilterOptions(): MangaListFilterOptions {
         return MangaListFilterOptions(
-            availableTags = emptySet(),
+            availableTags = fetchTags(),
             availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
-            availableContentTypes = EnumSet.of(ContentType.MANHWA, ContentType.MANGA)
+            availableContentTypes = EnumSet.of(ContentType.MANHWA, ContentType.MANHUA)
         )
     }
 
@@ -49,7 +50,10 @@ internal class Manhwaku(context: MangaLoaderContext) :
             }
         }
 
-        val json = webClient.httpGet(url).parseJson()
+        val json = webClient.httpGet(url) {
+            addHeader("X-Requested-With", "XMLHttpRequest")
+        }.parseJson()
+        
         val data = json.optJSONArray("data") ?: return emptyList()
 
         return data.mapJSON { jo ->
@@ -62,7 +66,7 @@ internal class Manhwaku(context: MangaLoaderContext) :
                 publicUrl = "https://$domain/detail/$slug",
                 rating = RATING_UNKNOWN,
                 contentRating = null,
-                coverUrl = jo.getString("cover_url"),
+                coverUrl = jo.optString("cover_url"),
                 tags = emptySet(),
                 state = null,
                 authors = emptySet(),
@@ -76,12 +80,11 @@ internal class Manhwaku(context: MangaLoaderContext) :
         
         val chapters = doc.select("a[href*='/read/']").mapIndexed { i, el ->
             val chUrl = el.attr("href").removePrefix("https://$domain").removePrefix("/")
-            val title = el.text()
             MangaChapter(
                 id = generateUid(chUrl),
-                title = title,
+                title = el.text(),
                 url = chUrl,
-                number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: (i + 1f),
+                number = el.text().filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: (i + 1f),
                 volume = 0,
                 scanlator = null,
                 uploadDate = 0L,
@@ -91,7 +94,7 @@ internal class Manhwaku(context: MangaLoaderContext) :
         }.reversed()
 
         return manga.copy(
-            description = doc.select(".text-gray-400").first()?.text(),
+            description = doc.select(".text-gray-400, p, #desk-content").firstOrNull()?.text(),
             chapters = chapters
         )
     }
@@ -99,7 +102,7 @@ internal class Manhwaku(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain/${chapter.url}").parseHtml()
         
-        return doc.select(".container img, .reader-area img").map { img ->
+        return doc.select(".container img, .reader-area img, img[class*='w-full']").map { img ->
             val imageUrl = img.src() ?: img.attr("data-src")
             MangaPage(
                 id = generateUid(imageUrl),
@@ -107,6 +110,22 @@ internal class Manhwaku(context: MangaLoaderContext) :
                 preview = null,
                 source = source
             )
-        }
+        }.filter { it.url.isNotBlank() && !it.url.contains("logo") }
+    }
+
+    private fun fetchTags(): Set<MangaTag> {
+        return setOf(
+            "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Horror", 
+            "Martial Arts", "Mystery", "Romance", "Sci-Fi", "Slice of Life", 
+            "Sports", "Supernatural", "Thriller", "Tragedy", "Historical", 
+            "Psychological", "School Life", "Seinen", "Shoujo", "Shounen", 
+            "Josei", "Harem", "Isekai", "Ecchi", "Gore", "Mature", "Adult"
+        ).map { title ->
+            MangaTag(
+                key = title.lowercase().replace(" ", "-"), 
+                title = title, 
+                source = source
+            )
+        }.toSet()
     }
 }
