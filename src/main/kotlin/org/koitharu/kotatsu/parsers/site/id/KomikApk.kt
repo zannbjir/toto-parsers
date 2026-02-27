@@ -38,8 +38,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
     override val filterCapabilities: MangaListFilterCapabilities
         get() = MangaListFilterCapabilities(
             isSearchSupported = true,
-            isMultipleTagsSupported = true,
-            isContentTypeFilterSupported = true
+            isMultipleTagsSupported = true
         )
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
@@ -49,17 +48,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
                     "https://$domain/pencarian?q=${filter.query.urlEncoded()}&is-adult=${if (isAdultContent()) "on" else "off"}"
                 }
                 else -> {
-                    val contentType = when {
-                        filter.contentTypes.size == 1 -> {
-                            when (filter.contentTypes.first()) {
-                                ContentType.MANGA -> "manga"
-                                ContentType.MANHWA -> "manhwa"
-                                ContentType.MANHUA -> "manhua"
-                                else -> "semua"
-                            }
-                        }
-                        else -> "semua"
-                    }
+                    val contentType = "semua"
 
                     val genre = when {
                         filter.tags.size == 1 -> filter.tags.first().key
@@ -92,6 +81,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
             }
 
             val doc = webClient.httpGet(url).parseHtml()
+            
             doc.select("a[href^=\"/komik/\"]").mapNotNull { link ->
                 val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                 val slug = href.removePrefix("/komik/").split("/").first()
@@ -156,6 +146,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
                 ?.takeIf { it.isNotEmpty() }
                 ?: "kmapk"
 
+            // Parse chapters
             val chapters = doc.select("a[href^=\"/komik/$slug/\"]").mapNotNull { link ->
                 val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                 if (!href.contains("/") || href.split("/").size < 4) return@mapNotNull null
@@ -243,30 +234,49 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     private fun getAllGenres(): Set<MangaTag> {
         val genreList = setOf(
+            // Basic Genres
             "3d", "action", "adventure", "anime", "comedy", "crime", "drama", "ecchi", "fantasy", 
             "film", "game", "horror", "historical", "isekai", "magic", "martial-arts", "mecha", 
             "medical", "military", "music", "mystery", "philosophical", "psychology", "psychological", 
             "reincarnation", "romance", "romantic", "sci-fi", "shoujo", "shounen", "seinen", "josei", 
             "slice-of-life", "sports", "supernatural", "thriller", "tragedy", "wuxia",
+            
+            // Format & Origin
             "doujin", "doujinshi", "manga", "manhua", "manhwa", "webtoon", "parody", "indie",
+            
+            // Story Elements
             "action-adventure", "body-swap", "drama-romance", "game", "school-life", "school-uniform",
             "story-arc", "tankoubon",
+            
+            // Demographic Tags
             "shoujo-ai", "shounen-ai", "boys-love", "girls-love", "yaoi", "yuri",
+            
+            // Character Types
             "elf", "demon", "demon-girl", "monster", "monster-girl", "monster-girls", "ghost", 
             "robot", "furry", "kemonomimi", "kemomimi", "cat-girl", "catgirl", "fox-girl", 
             "mouse-girl", "bunny-girl", "angel", "vampire", "succubus", "slime", "doll",
+            
+            // Relationship/Life Stage
             "aunt", "cousin", "daughter", "family", "girlfriend", "friends", "mother", "niece", 
             "sister", "uncle", "wife", "housewife", "house-wife", "office-lady", "teacher", 
             "maid", "nurse", "nun", "princess", "bride", "prostitution",
+            
+            // Physical Appearance
             "bald", "short-hair", "light-hair", "curly-hair", "long-hair", "ponytail", "twintail", 
             "twintails", "pony-tail", "glasses", "eyepatch", "fangs", "horns", "tail", "hairy", 
             "dark-skin", "darkskin", "tanlines", "beauty-mark", "beautymark", "piercing",
+            
+            // Body Type
             "big-breast", "big-breasts", "big-ass", "big-dick", "big-cock", "big-penis", 
             "small-breast", "small-breasts", "busty", "chubby", "muscle", "muscles", "petite", 
             "huge-breast", "huge-breasts", "huge-boobs", "bbw", "amputee",
+            
+            // Clothing & Accessories
             "apron", "bikini", "kimono", "lingerie", "lingeri", "pantyhose", "swimsuit", 
             "stocking", "stockings", "school-girl-uniform", "schoolgirl-outfit", "business-suit", 
             "bodysuit", "leotard", "garter-belt", "hotpants", "gym-outfit", "cosplay",
+            
+            // Sexual Content (Adult)
             "adult", "hentai", "smut", "uncensored", "uncensore", "uncencored", "creampie", 
             "anal", "anal-intercourse", "blowjob", "blow-job", "bondage", "bdsm", "domination", 
             "femdom", "handjob", "footjob", "paizuri", "rimjob", "facesitting", "cowgirl", 
@@ -274,19 +284,35 @@ internal class KomikAPK(context: MangaLoaderContext) :
             "threesome", "foursome", "orgy", "masturbation", "masturbasi", "fingering", 
             "cunnilingus", "breast-feeding", "lactation", "squirting", "kissing", "licking", 
             "biting", "sweating", "tentacles", "impregnation", "impregnate", "pregnant", "pregnant",
+            
+            // Fetish/Kink
             "feet", "foot-fetish", "guro", "scat", "inflation", "semen", "bukkake", "ejaculation", 
             "bukkake", "creampie", "defloration", "defloration", "double-penetration", "fisting", 
             "rough-sex", "harsh", "mindbreak", "corruption", "enslavement", "slavery", "slave",
+            
+            // Sexual Orientation
             "bisexual", "homosexual", "lesbian", "lesbi", "gay",
+            
+            // Special Attributes
             "tsundere", "kuudere", "yandere", "deredere", "osananajimi", "ojousama", "gyaru",
+            
+            // Fetish/Kink (continued)
             "bondage", "chains", "collar", "leash", "whip", "spanking", "slapping", "choking", 
             "gagging", "blindfold", "blinfold",
+            
+            // Setting
             "beach", "bathroom", "hot-spring", "hotspring", "love-hotel", "hotel", "school", 
             "highschool", "school-life", "outdoors", "public", "hidden-sex",
+            
+            // Age-Related (PROBLEMATIC - indicates potentially illegal content)
             "loli", "lolicon", "lolipai", "shota", "shotacon",
+            
+            // Other Adult Content
             "affair", "cheating", "netorare", "netorare", "netorase", "netori", "ntr", "voyeurism", 
 "exhibitionism", "blackmail", "rape", "forced", "non-consent", "drugs", "drunk", "sleep", 
             "sleeping", "hypnosis", "hipnotis", "mind-control", "mind-break", "magic", "invisible",
+            
+            // Misc Tags
             "full-color", "full-colour", "uncensored", "rough-translation", "sub-indo"
         )
         
@@ -298,7 +324,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
             )
         }.toSet()
     }
-
+    
     private fun isAdultContent(): Boolean {
         return true
     }
