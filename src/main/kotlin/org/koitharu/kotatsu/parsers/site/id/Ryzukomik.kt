@@ -12,12 +12,13 @@ import java.util.*
 
 @MangaSourceParser("RYZUKOMIK", "Ryzukomik", "id")
 internal class Ryzukomik(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.RYZUKOMIK, 24) {
+    PagedMangaParser(context, MangaParserSource.RYZUKOMIK, 20) {
 
     override val configKeyDomain = ConfigKey.Domain("ryzukomik.my.id")
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("referer", "https://$domain/")
+        .add("sec-fetch-dest", "document")
         .build()
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -84,15 +85,20 @@ internal class Ryzukomik(context: MangaLoaderContext) :
             val slug = jo.getString("slug")
             Manga(
                 id = generateUid(slug),
+                title = jo.getString("title"),
+                altTitles = emptySet(),
                 url = "/komik/$slug",
                 publicUrl = "https://$domain/komik/$slug",
-                title = jo.getString("title"),
+                rating = RATING_UNKNOWN,
+                contentRating = null,
                 coverUrl = jo.getString("cover"),
+                tags = emptySet(),
                 state = when (jo.getString("status").lowercase()) {
                     "ongoing" -> MangaState.ONGOING
                     "completed" -> MangaState.FINISHED
                     else -> null
                 },
+                authors = emptySet(),
                 source = source,
             )
         }
@@ -101,38 +107,52 @@ internal class Ryzukomik(context: MangaLoaderContext) :
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet("https://$domain${manga.url}").parseHtml()
         
+        val tags = doc.select("a[class*='bg-neutral-800'], a[href*='genre=']").map { el ->
+            MangaTag(
+                key = el.attr("href").substringAfter("genre=").substringBefore("&").ifEmpty { el.text().lowercase() },
+                title = el.text(),
+                source = source
+            )
+        }.toSet()
+
+        val authors = setOf(doc.select("div.text-neutral-200").first()?.text()?.removeSuffix(" (Author)") ?: "")
+
+        val chapters = doc.select("div.chapter-list a, a[href*='/chapter/']").mapIndexed { i, el ->
+            val chapterUrl = el.attr("href").removePrefix("/")
+            val title = el.select("span.visited-chapter").text().ifBlank { el.text() }
+            
+            // Mengambil upload date dari data-time unix timestamp
+            val unixTime = el.selectFirst(".time-ago")?.attr("data-time")?.toLongOrNull() ?: 0L
+            MangaChapter(
+                id = generateUid(chapterUrl),
+                title = title,
+                url = chapterUrl,
+                number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: (i + 1f),
+                volume = 0,
+                scanlator = null,
+                uploadDate = unixTime * 1000,
+                branch = null,
+                source = source,
+            )
+        }.reversed()
+
         return manga.copy(
             description = doc.select("#desk-content").text(),
-            authors = setOf(doc.select("div.text-neutral-200").first()?.text()?.removeSuffix(" (Author)") ?: ""),
-            tags = doc.select("a[class*='bg-neutral-800']").map { el ->
-                MangaTag(
-                    key = el.attr("href").substringAfter("genre=").ifEmpty { el.text().lowercase() },
-                    title = el.text(),
-                    source = source
-                )
-            }.toSet(),
-            chapters = doc.select("div.chapter-list a").map { el ->
-                val chapterUrl = el.attr("href").removePrefix("/")
-                val title = el.select("span.visited-chapter").text()
-                MangaChapter(
-                    id = generateUid(chapterUrl),
-                    title = title,
-                    number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                    url = chapterUrl,
-                    source = source,
-                )
-            }.reversed()
+            authors = authors,
+            tags = tags,
+            chapters = chapters
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain/${chapter.url}").parseHtml()
         
-        return doc.select("#chap-img img").map { img ->
-            val imageUrl = img.attr("src")
+        return doc.select("#chap-img img, div.reader-area img").map { img ->
+            val imageUrl = img.src() ?: img.attr("data-src")
             MangaPage(
                 id = generateUid(imageUrl),
                 url = imageUrl,
+                preview = null,
                 source = source
             )
         }
@@ -147,7 +167,11 @@ internal class Ryzukomik(context: MangaLoaderContext) :
             "romance", "school-life", "sci-fi", "seinen", "shoujo", "shounen", "slice-of-life",
             "supernatural", "thriller", "tragedy", "vampire", "webtoons"
         ).map { slug ->
-            MangaTag(key = slug, title = slug.replace("-", " ").capitalize(), source = source)
+            MangaTag(
+                key = slug, 
+                title = slug.replace("-", " ").replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }, 
+                source = source
+            )
         }.toSet()
     }
 }
