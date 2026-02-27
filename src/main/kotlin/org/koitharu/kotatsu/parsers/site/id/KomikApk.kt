@@ -7,7 +7,6 @@ import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.util.*
-import org.koitharu.kotatsu.parsers.util.json.*
 import java.util.*
 
 @MangaSourceParser("KOMIKAPK", "KomikAPK", "id")
@@ -18,7 +17,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Referer", "https://$domain/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -29,9 +28,7 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     override suspend fun getFilterOptions(): MangaListFilterOptions {
         return MangaListFilterOptions(
-            availableTags = fetchTags(),
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
-            availableContentTypes = EnumSet.of(ContentType.MANGA, ContentType.MANHWA, ContentType.MANHUA)
+            availableTags = fetchTags()
         )
     }
 
@@ -45,14 +42,13 @@ internal class KomikAPK(context: MangaLoaderContext) :
         return try {
             val url = when {
                 !filter.query.isNullOrEmpty() -> {
-                    "https://$domain/pencarian?q=${filter.query.urlEncoded()}&is-adult=${if (isAdultContent()) "on" else "off"}"
+                    "https://$domain/pencarian?q=${filter.query.urlEncoded()}&is-adult=on"
                 }
                 else -> {
-                    val contentType = "semua"
-
-                    val genre = when {
-                        filter.tags.size == 1 -> filter.tags.first().key
-                        else -> "semua"
+                    val genre = if (filter.tags.size == 1) {
+                        filter.tags.first().key
+                    } else {
+                        "semua"
                     }
 
                     val sort = when (order) {
@@ -62,58 +58,43 @@ internal class KomikAPK(context: MangaLoaderContext) :
                         else -> "terbaru"
                     }
 
-                    buildString {
-                        append("https://")
-                        append(domain)
-                        append("/pustaka/")
-                        append(contentType)
-                        append("/")
-                        append(genre)
-                        append("/")
-                        append(sort)
-                        append("/")
-                        append(page)
-                        if (isAdultContent()) {
-                            append("?include_adult=true")
-                        }
-                    }
+                    "https://$domain/pustaka/semua/$genre/$sort/$page?include_adult=true"
                 }
             }
 
             val doc = webClient.httpGet(url).parseHtml()
             
             doc.select("a[href^=\"/komik/\"]").mapNotNull { link ->
-                val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                val slug = href.removePrefix("/komik/").split("/").first()
-                
-                if (slug.isBlank()) return@mapNotNull null
-                val img = link.selectFirst("img")?.src() ?: return@mapNotNull null
-                val type = link.ownText()
-                    .split("\n")
-                    .firstOrNull { it.lowercase().contains(Regex("manhwa|manga|manhua")) }
-                    ?.lowercase()?.trim()
-                    ?: "manga"
+                try {
+                    val href = link.attr("href")
+                    val slug = href.removePrefix("/komik/").substringBefore("?").split("/").first()
+                    
+                    if (slug.isBlank()) return@mapNotNull null
 
-                val title = link.selectFirst("img")?.attr("alt")
-                    ?: link.text().split("\n").lastOrNull()
-                    ?: return@mapNotNull null
-
-                val titleClean = title.replace(Regex("(manhwa|manga|manhua|ch\\..*)", RegexOption.IGNORE_CASE), "").trim()
-                
-                Manga(
-                    id = generateUid(slug),
-                    title = titleClean,
-                    altTitles = emptySet(),
-                    url = "/komik/$slug",
-                    publicUrl = "https://$domain/komik/$slug",
-                    rating = RATING_UNKNOWN,
-                    contentRating = null,
-                    coverUrl = img.takeIf { it.isNotEmpty() },
-                    tags = emptySet(),
-                    state = null,
-                    authors = emptySet(),
-                    source = source
-                )
+                    val img = link.selectFirst("img")?.absUrl("src") ?: return@mapNotNull null
+                    if (img.isBlank()) return@mapNotNull null
+                    val title = link.selectFirst("h3")?.text()?.trim()
+                        ?: link.select("div").lastOrNull()?.text()?.trim()
+                        
+                    if (title.isNullOrBlank()) return@mapNotNull null
+                    
+                    Manga(
+                        id = generateUid(slug),
+                        title = title,
+                        altTitles = emptySet(),
+                        url = "/komik/$slug",
+                        publicUrl = "https://$domain/komik/$slug",
+                        rating = RATING_UNKNOWN,
+                        contentRating = null,
+                        coverUrl = img,
+                        tags = emptySet(),
+                        state = null,
+                        authors = emptySet(),
+                        source = source
+                    )
+                } catch (e: Exception) {
+                    null
+                }
             }
         } catch (e: Exception) {
             emptyList()
@@ -122,42 +103,33 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     override suspend fun getDetails(manga: Manga): Manga {
         return try {
-            val slug = manga.url.removePrefix("/komik/").split("/").first()
             val doc = webClient.httpGet(manga.publicUrl).parseHtml()
-            val title = doc.selectFirst("h1")?.text()?.trim() ?: manga.title
-            val description = doc.selectFirst(".description, [class*='deskripsi'], [class*='synopsis']")?.text()
-                ?: doc.select("p").filter { it.text().length > 50 }.firstOrNull()?.text()
-            val tags = doc.select("a[href*='/pustaka/'][href*='/terbaru/']").mapNotNull { link ->
+            val title = doc.selectFirst("h1.font-label")?.text()?.trim() ?: manga.title
+            val description = doc.select("div.font-display").firstOrNull { 
+                it.text().length > 50 
+            }?.text()?.trim()
+            val tags = doc.select("a[href*='/pustaka/semua/'][href*='/terbaru/']").mapNotNull { link ->
                 val genre = link.text().trim()
-                if (genre.isNotEmpty()) {
-                    MangaTag(
-                        key = genre.lowercase().replace(" ", "-"),
-                        title = genre,
-                        source = source
-                    )
-                } else {
-                    null
-                }
+                val href = link.attr("href")
+                val key = href.substringAfter("/pustaka/semua/").substringBefore("/terbaru")
+                
+                if (genre.isNotEmpty() && key.isNotEmpty()) {
+                    MangaTag(key, genre, source)
+                } else null
             }.toSet()
 
-            val defaultUploader = doc.selectFirst("a[href*='?uploader=']")
-                ?.attr("href")
-                ?.substringAfterLast("uploader=")
-                ?.takeIf { it.isNotEmpty() }
-                ?: "kmapk"
-
-            // Parse chapters
-            val chapters = doc.select("a[href^=\"/komik/$slug/\"]").mapNotNull { link ->
-                val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                if (!href.contains("/") || href.split("/").size < 4) return@mapNotNull null
-
-                val parts = href.split("/")
-                val uploader = parts.getOrNull(2)?.takeIf { it.isNotEmpty() } ?: defaultUploader
+            val chapters = doc.select("a.btn.join-itemm[href^=\"/komik/\"]").mapNotNull { link ->
+                val href = link.attr("href")
+                val parts = href.removePrefix("/komik/").split("/")
+                if (parts.size < 3) return@mapNotNull null
+                
                 val chapterNum = parts.lastOrNull()?.toFloatOrNull() ?: return@mapNotNull null
-
-                val chapterTitle = link.text().trim()
+                val uploader = parts.getOrNull(1) ?: return@mapNotNull null
+                val chapterTitle = link.selectFirst("div")?.text()?.trim() 
+                    ?: "Chapter $chapterNum"
+                
                 if (chapterTitle.isBlank()) return@mapNotNull null
-
+                
                 MangaChapter(
                     id = generateUid(href),
                     title = chapterTitle,
@@ -184,17 +156,12 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         return try {
-            val url = "https://$domain${chapter.url}"
-            val doc = webClient.httpGet(url).parseHtml()
-
-            doc.select("img[src*='cdn-guard.com/komikapk-chapter/']").mapNotNull { img ->
-                val imageUrl = img.attr("src").takeIf { it.isNotEmpty() }
-                    ?: img.attr("data-src").takeIf { it.isNotEmpty() }
-                    ?: return@mapNotNull null
-
-                if (!imageUrl.contains("komikapk-chapter") || imageUrl.isBlank()) {
-                    return@mapNotNull null
-                }
+            val doc = webClient.httpGet("https://$domain${chapter.url}").parseHtml()
+            
+            doc.select("section img[src*='komikapk-chapter']").mapNotNull { img ->
+                val imageUrl = img.absUrl("src").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                
+                if (imageUrl.isBlank()) return@mapNotNull null
 
                 MangaPage(
                     id = generateUid(imageUrl),
@@ -210,122 +177,50 @@ internal class KomikAPK(context: MangaLoaderContext) :
 
     private suspend fun fetchTags(): Set<MangaTag> {
         return try {
-            val doc = webClient.httpGet("https://$domain/pustaka/semua/semua/terbaru/1").parseHtml()
+            val doc = webClient.httpGet("https://$domain/pustaka/semua/semua/terbaru/1?include_adult=true")
+                .parseHtml()
+            val tags = doc.select("dialog#modal_genres a[href*='/pustaka/semua/'][href*='/terbaru/']")
+                .distinctBy { it.attr("href") }
+                .mapNotNull { link ->
+                    val genre = link.text().trim()
+                    val href = link.attr("href")
+                    val key = href.substringAfter("/pustaka/semua/").substringBefore("/terbaru")
+                    
+                    if (genre.isNotEmpty() && key.isNotEmpty()) {
+                        MangaTag(key, genre, source)
+                    } else null
+                }.toSet()
             
-            doc.select("a[href*='/pustaka/semua/'][href*='/terbaru/']").mapNotNull { link ->
-                val genre = link.text().trim()
-                val href = link.attr("href")
-                val key = href.substringAfter("/pustaka/semua/")
-                    .substringBefore("/terbaru")
-                    .takeIf { it.isNotEmpty() }
-                
-                if (genre.isNotEmpty() && key != null) {
-                    MangaTag(
-                        key = key,
-                        title = genre.capitalize(),
-                        source = source
-                    )
-                } else null
-            }.toSet()
+            if (tags.isEmpty()) {
+                doc.select("a[href*='/pustaka/semua/'][href*='/terbaru/']")
+                    .distinctBy { it.attr("href") }
+                    .mapNotNull { link ->
+                        val genre = link.text().trim()
+                        val href = link.attr("href")
+                        val key = href.substringAfter("/pustaka/semua/").substringBefore("/terbaru")
+                        
+                        if (genre.isNotEmpty() && key.isNotEmpty()) {
+                            MangaTag(key, genre, source)
+                        } else null
+                    }.toSet()
+            } else {
+                tags
+            }
         } catch (e: Exception) {
-            getAllGenres()
-        }
-    }
-
-    private fun getAllGenres(): Set<MangaTag> {
-        val genreList = setOf(
-            // Basic Genres
-            "3d", "action", "adventure", "anime", "comedy", "crime", "drama", "ecchi", "fantasy", 
-            "film", "game", "horror", "historical", "isekai", "magic", "martial-arts", "mecha", 
-            "medical", "military", "music", "mystery", "philosophical", "psychology", "psychological", 
-            "reincarnation", "romance", "romantic", "sci-fi", "shoujo", "shounen", "seinen", "josei", 
-            "slice-of-life", "sports", "supernatural", "thriller", "tragedy", "wuxia",
-            
-            // Format & Origin
-            "doujin", "doujinshi", "manga", "manhua", "manhwa", "webtoon", "parody", "indie",
-            
-            // Story Elements
-            "action-adventure", "body-swap", "drama-romance", "game", "school-life", "school-uniform",
-            "story-arc", "tankoubon",
-            
-            // Demographic Tags
-            "shoujo-ai", "shounen-ai", "boys-love", "girls-love", "yaoi", "yuri",
-            
-            // Character Types
-            "elf", "demon", "demon-girl", "monster", "monster-girl", "monster-girls", "ghost", 
-            "robot", "furry", "kemonomimi", "kemomimi", "cat-girl", "catgirl", "fox-girl", 
-            "mouse-girl", "bunny-girl", "angel", "vampire", "succubus", "slime", "doll",
-            
-            // Relationship/Life Stage
-            "aunt", "cousin", "daughter", "family", "girlfriend", "friends", "mother", "niece", 
-            "sister", "uncle", "wife", "housewife", "house-wife", "office-lady", "teacher", 
-            "maid", "nurse", "nun", "princess", "bride", "prostitution",
-            
-            // Physical Appearance
-            "bald", "short-hair", "light-hair", "curly-hair", "long-hair", "ponytail", "twintail", 
-            "twintails", "pony-tail", "glasses", "eyepatch", "fangs", "horns", "tail", "hairy", 
-            "dark-skin", "darkskin", "tanlines", "beauty-mark", "beautymark", "piercing",
-            
-            // Body Type
-            "big-breast", "big-breasts", "big-ass", "big-dick", "big-cock", "big-penis", 
-            "small-breast", "small-breasts", "busty", "chubby", "muscle", "muscles", "petite", 
-            "huge-breast", "huge-breasts", "huge-boobs", "bbw", "amputee",
-            
-            // Clothing & Accessories
-            "apron", "bikini", "kimono", "lingerie", "lingeri", "pantyhose", "swimsuit", 
-            "stocking", "stockings", "school-girl-uniform", "schoolgirl-outfit", "business-suit", 
-            "bodysuit", "leotard", "garter-belt", "hotpants", "gym-outfit", "cosplay",
-            
-            // Sexual Content (Adult)
-            "adult", "hentai", "smut", "uncensored", "uncensore", "uncencored", "creampie", 
-            "anal", "anal-intercourse", "blowjob", "blow-job", "bondage", "bdsm", "domination", 
-            "femdom", "handjob", "footjob", "paizuri", "rimjob", "facesitting", "cowgirl", 
-            "mating-press", "nakadashi", "deepthroat", "gang-bang", "gangbang", "group-sex", 
-            "threesome", "foursome", "orgy", "masturbation", "masturbasi", "fingering", 
-            "cunnilingus", "breast-feeding", "lactation", "squirting", "kissing", "licking", 
-            "biting", "sweating", "tentacles", "impregnation", "impregnate", "pregnant", "pregnant",
-            
-            // Fetish/Kink
-            "feet", "foot-fetish", "guro", "scat", "inflation", "semen", "bukkake", "ejaculation", 
-            "bukkake", "creampie", "defloration", "defloration", "double-penetration", "fisting", 
-            "rough-sex", "harsh", "mindbreak", "corruption", "enslavement", "slavery", "slave",
-            
-            // Sexual Orientation
-            "bisexual", "homosexual", "lesbian", "lesbi", "gay",
-            
-            // Special Attributes
-            "tsundere", "kuudere", "yandere", "deredere", "osananajimi", "ojousama", "gyaru",
-            
-            // Fetish/Kink (continued)
-            "bondage", "chains", "collar", "leash", "whip", "spanking", "slapping", "choking", 
-            "gagging", "blindfold", "blinfold",
-            
-            // Setting
-            "beach", "bathroom", "hot-spring", "hotspring", "love-hotel", "hotel", "school", 
-            "highschool", "school-life", "outdoors", "public", "hidden-sex",
-            
-            // Age-Related (PROBLEMATIC - indicates potentially illegal content)
-            "loli", "lolicon", "lolipai", "shota", "shotacon",
-            
-            // Other Adult Content
-            "affair", "cheating", "netorare", "netorare", "netorase", "netori", "ntr", "voyeurism", 
-"exhibitionism", "blackmail", "rape", "forced", "non-consent", "drugs", "drunk", "sleep", 
-            "sleeping", "hypnosis", "hipnotis", "mind-control", "mind-break", "magic", "invisible",
-            
-            // Misc Tags
-            "full-color", "full-colour", "uncensored", "rough-translation", "sub-indo"
-        )
-        
-        return genreList.map { key ->
-            MangaTag(
-                key = key,
-                title = key.replace("-", " ").capitalize(),
-                source = source
+            setOf(
+                MangaTag("action", "Action", source),
+                MangaTag("comedy", "Comedy", source),
+                MangaTag("drama", "Drama", source),
+                MangaTag("fantasy", "Fantasy", source),
+                MangaTag("horror", "Horror", source),
+                MangaTag("manga", "Manga", source),
+                MangaTag("manhwa", "Manhwa", source),
+                MangaTag("manhua", "Manhua", source),
+                MangaTag("romance", "Romance", source),
+                MangaTag("school-life", "School Life", source),
+                MangaTag("supernatural", "Supernatural", source),
+                MangaTag("yuri", "Yuri", source)
             )
-        }.toSet()
-    }
-    
-    private fun isAdultContent(): Boolean {
-        return true
+        }
     }
 }
