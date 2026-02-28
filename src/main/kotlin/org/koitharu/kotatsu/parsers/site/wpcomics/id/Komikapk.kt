@@ -9,16 +9,16 @@ import org.koitharu.kotatsu.parsers.site.wpcomics.WpComicsParser
 import org.koitharu.kotatsu.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("SOFTKOMIK", "Softkomik", "id")
-internal class Softkomik(context: MangaLoaderContext) :
-    WpComicsParser(context, MangaParserSource.SOFTKOMIK, "softkomik.co") {
+@MangaSourceParser("KOMIKAPK", "KomikApk", "id")
+internal class Komikapk(context: MangaLoaderContext) :
+    WpComicsParser(context, MangaParserSource.KOMIKAPK, "komikapk.app") {
 
     init {
         paginator.firstPage = 1
         searchPaginator.firstPage = 1
     }
 
-    override val listUrl = "/komik/library"
+    override val listUrl = "/pustaka"
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.NEWEST,
@@ -28,32 +28,14 @@ internal class Softkomik(context: MangaLoaderContext) :
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = if (!filter.query.isNullOrEmpty()) {
-            "https://$domain/komik/list?name=${filter.query.urlEncoded()}"
+            "https://$domain/pencarian?q=${filter.query.urlEncoded()}&is-adult=on"
         } else {
-            buildString {
-                append("https://")
-                append(domain)
-                append(listUrl)
-                append("?page=")
-                append(page)
-                
-                filter.tags.firstOrNull()?.let {
-                    append("&genre=")
-                    append(it.key)
-                }
-
-                filter.states.oneOrThrowIfMany()?.let {
-                    append("&status=")
-                    append(if (it == MangaState.ONGOING) "ongoing" else "completed")
-                }
-
-                append("&sortBy=")
-                append(when (order) {
-                    SortOrder.POPULARITY -> "view"
-                    SortOrder.NEWEST -> "newKomik"
-                    else -> "update"
-                })
+            val tag = filter.tags.firstOrNull()?.key ?: "semua"
+            val sort = when (order) {
+                SortOrder.POPULARITY -> "terpopuler"
+                else -> "terbaru"
             }
+            "https://$domain$listUrl/semua/$tag/$sort/$page?include_adult=true"
         }
 
         val doc = webClient.httpGet(url).parseHtml()
@@ -61,10 +43,12 @@ internal class Softkomik(context: MangaLoaderContext) :
     }
 
     override fun parseMangaList(doc: Document, tagMap: ArrayMap<String, MangaTag>): List<Manga> {
-        return doc.select(".listupd .bs, .grid-container .bs").mapNotNull { el ->
+        return doc.select(".listupd .bs, .grid-container .bs, .grid-item").mapNotNull { el ->
             val a = el.selectFirst("a") ?: return@mapNotNull null
             val mangaUrl = a.attrAsRelativeUrl("href")
             
+            if (!mangaUrl.contains("/komik/")) return@mapNotNull null
+
             Manga(
                 id = generateUid(mangaUrl),
                 title = el.select(".tt, .title, h3").text().trim(),
@@ -84,14 +68,14 @@ internal class Softkomik(context: MangaLoaderContext) :
 
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.publicUrl).parseHtml()
-        val chapters = doc.select("#chapterlist li, .clist li").mapIndexed { i, el ->
-            val a = el.selectFirst("a") ?: return@mapIndexed null
-            val href = a.attrAsRelativeUrl("href")
+        
+        val chapters = doc.select(".clist a, #chapterlist a, a[href*='/kmapk/']").mapIndexed { i, el ->
+            val href = el.attrAsRelativeUrl("href")
             MangaChapter(
                 id = generateUid(href),
-                title = a.text().trim(),
+                title = el.text().trim(),
                 url = href,
-                number = a.text().replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: (i + 1f),
+                number = el.text().replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: (i + 1f),
                 volume = 0,
                 scanlator = null,
                 uploadDate = 0L,
@@ -101,7 +85,7 @@ internal class Softkomik(context: MangaLoaderContext) :
         }.filterNotNull().reversed()
 
         return manga.copy(
-            description = doc.select(".entry-content p, .synopsis").text().trim(),
+            description = doc.select(".entry-content p, .desc, .synopsis").text().trim(),
             chapters = chapters
         )
     }
@@ -109,7 +93,7 @@ internal class Softkomik(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
         
-        return doc.select("#readerarea img").mapNotNull { img ->
+        return doc.select("#readerarea img, .reader-area img").mapNotNull { img ->
             val url = img.attr("data-src").takeIf { it.isNotEmpty() } 
                       ?: img.attr("src") 
                       ?: return@mapNotNull null
