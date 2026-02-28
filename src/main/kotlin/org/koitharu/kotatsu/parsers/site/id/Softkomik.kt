@@ -45,16 +45,14 @@ internal class Softkomik(context: MangaLoaderContext) :
                 append("/komik/library?page=")
                 append(page)
                 
-                val genre = filter.tags.firstOrNull()?.key ?: ""
-                if (genre.isNotEmpty()) {
+                filter.tags.firstOrNull()?.key?.let { 
                     append("&genre=")
-                    append(genre)
+                    append(it)
                 }
 
-                val state = filter.states.oneOrThrowIfMany()
-                if (state != null) {
+                filter.states.oneOrThrowIfMany()?.let {
                     append("&status=")
-                    append(if (state == MangaState.ONGOING) "ongoing" else "completed")
+                    append(if (it == MangaState.ONGOING) "ongoing" else "completed")
                 }
 
                 append("&sortBy=")
@@ -63,11 +61,12 @@ internal class Softkomik(context: MangaLoaderContext) :
         }
 
         val doc = webClient.httpGet(url).parseHtml()
-
+        
         return doc.select(".listupd .bs, .grid-container .bs, .grid-item").mapNotNull { el ->
             val link = el.selectFirst("a") ?: return@mapNotNull null
             val mangaUrl = link.attr("href").removePrefix("https://$domain").removePrefix("http://$domain")
             if (mangaUrl.contains("/chapter/")) return@mapNotNull null
+            val coverUrl = el.selectFirst("img")?.src() ?: ""
 
             Manga(
                 id = generateUid(mangaUrl),
@@ -77,7 +76,7 @@ internal class Softkomik(context: MangaLoaderContext) :
                 publicUrl = "https://$domain$mangaUrl",
                 rating = RATING_UNKNOWN,
                 contentRating = null,
-                coverUrl = el.select("img").src() ?: "",
+                coverUrl = coverUrl,
                 tags = emptySet(),
                 state = null,
                 authors = emptySet(),
@@ -105,7 +104,7 @@ internal class Softkomik(context: MangaLoaderContext) :
                 branch = null,
                 source = source
             )
-        }.filterNotNull().reversed()
+        }.reversed()
 
         return manga.copy(
             description = doc.select(".entry-content p, .desc, .synopsis").text().trim(),
@@ -115,6 +114,7 @@ internal class Softkomik(context: MangaLoaderContext) :
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain/${chapter.url}").parseHtml()
+        
         return doc.select("#readerarea img, .reader-area img, .entry-content img").mapNotNull { img ->
             val imageUrl = img.src() ?: img.attr("data-src") ?: return@mapNotNull null
             if (imageUrl.contains(Regex("logo|ads|banner|iklan", RegexOption.IGNORE_CASE))) return@mapNotNull null
