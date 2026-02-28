@@ -159,7 +159,7 @@ internal class Komikapk(context: MangaLoaderContext) :
         )
         val uniqueGenres = genreList.toSet().toList()
         val result = ArrayMap<String, MangaTag>(uniqueGenres.size)
-        for (genre in genres) {
+        for (genre in genreList) {
             val key = genre.lowercase().replace(" ", "-")
             result[genre] = MangaTag(title = genre, key = key, source = source)
         }
