@@ -2,7 +2,6 @@ package org.koitharu.kotatsu.parsers.site.id
 
 import org.json.JSONArray
 import org.json.JSONObject
-import org.jsoup.Jsoup
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
@@ -29,61 +28,54 @@ internal class Thrive(context: MangaLoaderContext) :
 
     override suspend fun getFilterOptions(): MangaListFilterOptions {
         val genres = listOf(
-            "Action", "Adventure", "Boys' Love", "Comedy", "Crime", "Drama", 
-            "Fantasy", "Girls' Love", "Historical", "Horror", "Isekai", "Mecha", 
-            "Medical", "Mystery", "Psychological", "Romance", "Sci-Fi", 
+            "Action", "Adventure", "Boys' Love", "Comedy", "Crime", "Drama",
+            "Fantasy", "Girls' Love", "Historical", "Horror", "Isekai", "Mecha",
+            "Medical", "Mystery", "Psychological", "Romance", "Sci-Fi",
             "Slice of Life", "Sports", "Superhero", "Thriller", "Tragedy"
         )
-        
+
         return MangaListFilterOptions(
-            availableTags = genres.map { name -> 
+            availableTags = genres.map { name ->
                 val key = name.lowercase().replace(" ", "-").replace("'", "")
-                MangaTag(name, key, source) 
+                MangaTag(name, key, source)
             }.toSet()
         )
     }
 
-    private fun getNextData(html: String): JSONObject {
-        val document = Jsoup.parse(html)
-        val scriptData = document.selectFirst("script#__NEXT_DATA__")?.data()
-            ?: throw Exception("Data JSON tidak ditemukan")
-        val json = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps")
-        return if (json.has("data")) json.getJSONObject("data") else json
+    private fun JSONObject.extractPageProps(): JSONObject {
+        val props = optJSONObject("props")?.optJSONObject("pageProps") ?: return JSONObject()
+        return props.optJSONObject("data") ?: props
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = when {
-            !filter.query.isNullOrEmpty() -> {
-                "https://$domain/search?q=${filter.query.urlEncoded()}"
-            }
-            filter.tags.isNotEmpty() -> {
-                "https://$domain/genre/${filter.tags.first().key}?page=$page"
-            }
-            else -> {
-                if (page > 1) "https://$domain/?page=$page" else "https://$domain/"
-            }
+            !filter.query.isNullOrEmpty() -> "https://$domain/search?q=${filter.query.urlEncoded()}"
+            filter.tags.isNotEmpty() -> "https://$domain/genre/${filter.tags.first().key}?page=$page"
+            else -> if (page > 1) "https://$domain/?page=$page" else "https://$domain/"
         }
 
         val response = webClient.httpGet(url)
-        val body = response.body?.string() ?: return emptyList()
-        val props = getNextData(body)
+        val doc = response.parseHtml()
         
-        val array = props.optJSONArray("terbaru") 
-            ?: props.optJSONArray("res") 
-            ?: props.optJSONArray("data") 
+        val script = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
+        val props = JSONObject(script).extractPageProps()
+
+        val array = props.optJSONArray("terbaru")
+            ?: props.optJSONArray("res")
+            ?: props.optJSONArray("data")
             ?: return emptyList()
 
         val mangaList = mutableListOf<Manga>()
         for (i in 0 until array.length()) {
             val jo = array.getJSONObject(i)
-            val id = jo.getString("id")
+            val id = jo.optString("id") ?: continue
             val cover = jo.optString("cover")
-            
+
             mangaList.add(Manga(
                 id = generateUid(id),
                 url = "/title/$id",
                 publicUrl = "https://$domain/title/$id",
-                title = jo.getString("title").trim(),
+                title = jo.optString("title", "Untitled").trim(),
                 altTitles = emptySet(),
                 coverUrl = cover,
                 largeCoverUrl = cover,
@@ -100,18 +92,18 @@ internal class Thrive(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val response = webClient.httpGet(manga.publicUrl)
-        val body = response.body?.string() ?: throw Exception("Gagal memuat detail")
-        val props = getNextData(body)
+        val doc = webClient.httpGet(manga.publicUrl).parseHtml()
+        val script = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: throw Exception("JSON detail null")
+        val props = JSONObject(script).extractPageProps()
 
         val chaptersArray = props.optJSONArray("chapters") ?: props.optJSONArray("chapterlist") ?: JSONArray()
         val chapters = mutableListOf<MangaChapter>()
-        
+
         for (i in 0 until chaptersArray.length()) {
             val ch = chaptersArray.getJSONObject(i)
-            val chId = ch.getString("id")
+            val chId = ch.optString("id") ?: continue
             val chNum = ch.optString("chapter_number", "0")
-            
+
             chapters.add(MangaChapter(
                 id = generateUid(chId),
                 title = "Chapter $chNum",
@@ -128,7 +120,8 @@ internal class Thrive(context: MangaLoaderContext) :
         val tags = mutableSetOf<MangaTag>()
         props.optJSONArray("tags")?.let { tagArray ->
             for (i in 0 until tagArray.length()) {
-                val name = tagArray.getJSONObject(i).getString("name")
+                val tagObj = tagArray.getJSONObject(i)
+                val name = tagObj.optString("name") ?: continue
                 val key = name.lowercase().replace(" ", "-").replace("'", "")
                 tags.add(MangaTag(name, key, source))
             }
@@ -143,17 +136,16 @@ internal class Thrive(context: MangaLoaderContext) :
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val fullUrl = if (chapter.url.startsWith("http")) chapter.url else "https://$domain${chapter.url}"
-        val response = webClient.httpGet(fullUrl)
-        val body = response.body?.string() ?: return emptyList()
-        val props = getNextData(body)
-        
+        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+        val script = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
+        val props = JSONObject(script).extractPageProps()
+
         val prefix = props.optString("prefix")
         val images = props.optJSONArray("images") ?: JSONArray()
-        
+
         val pages = mutableListOf<MangaPage>()
         for (i in 0 until images.length()) {
-            val imageName = images.getString(i)
+            val imageName = images.optString(i) ?: continue
             val imageUrl = "https://cdn.thrive.moe/data/$prefix/$imageName"
             pages.add(MangaPage(
                 id = generateUid(imageUrl),
