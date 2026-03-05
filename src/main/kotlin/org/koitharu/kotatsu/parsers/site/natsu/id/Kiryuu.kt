@@ -25,11 +25,13 @@ internal class Kiryuu(context: MangaLoaderContext) :
         val response = webClient.httpGet(chapter.url.toAbsoluteUrl(domain))
         val doc = response.parseHtml()
         
-        return doc.select("#readerarea img").filter { img ->
-            val url = img.src()
-            url.isNotBlank() && !url.contains("loading") 
-        }.map { img ->
+        return doc.select("#readerarea img").mapNotNull { img ->
             val imgUrl = img.src()
+            
+            if (imgUrl.isNullOrBlank() || imgUrl.contains("loading")) {
+                return@mapNotNull null
+            }
+
             MangaPage(
                 id = generateUid(imgUrl),
                 url = imgUrl,
