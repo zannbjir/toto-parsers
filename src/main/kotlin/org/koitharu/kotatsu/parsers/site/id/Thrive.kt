@@ -39,7 +39,7 @@ internal class Thrive(context: MangaLoaderContext) :
             availableTags = genres.map { name -> 
                 val key = name.lowercase().replace(" ", "-").replace("'", "")
                 MangaTag(name, key, source) 
-            }
+            }.toSet()
         )
     }
 
