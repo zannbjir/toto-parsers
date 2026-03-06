@@ -9,7 +9,7 @@ import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 
 @MangaSourceParser("MANGATOON", "MangaToon", "id", ContentType.HENTAI)
 internal class Mangatoon(context: MangaLoaderContext) :
-    MangaReaderParser(context, MangaParserSource.MANGATOONDEWASA, "komik6.mangatoon.cc", pageSize = 20, searchPageSize = 10) {
+    MangaReaderParser(context, MangaParserSource.MANGATOON, "komik6.mangatoon.cc", pageSize = 20, searchPageSize = 10) {
 
     override val configKeyDomain = ConfigKey.Domain(
         "komik6.mangatoon.cc",
