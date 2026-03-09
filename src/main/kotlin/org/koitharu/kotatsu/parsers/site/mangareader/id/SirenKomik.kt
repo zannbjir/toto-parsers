@@ -1,6 +1,5 @@
 package org.koitharu.kotatsu.parsers.site.mangareader.id
 
-import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
@@ -195,33 +194,44 @@ internal class SirenKomik(context: MangaLoaderContext) :
 
     private suspend fun fetchPagesViaAjax(postId: String): List<MangaPage> {
         return try {
-            val formBody = FormBody.Builder()
-                .add("action", "get_image_json")
-                .add("post_id", postId)
-                .build()
+            // Use Map<String, String> instead of FormBody
+            val formData = mapOf(
+                "action" to "get_image_json",
+                "post_id" to postId
+            )
 
-            val response = webClient.httpPost("https://$domain/wp-admin/admin-ajax.php", formBody, getRequestHeaders())
+            val response = webClient.httpPost("https://$domain/wp-admin/admin-ajax.php", formData, getRequestHeaders())
             val bodyStr = response.body?.string() ?: return emptyList()
 
+            // Parse JSON response
             val json = JSONObject(bodyStr)
-            val dataObj = json.optJSONObject("data")
-            val sourcesArray = dataObj?.optJSONArray("sources") ?: return emptyList()
+            
+            // Use try-catch for optional data access
+            val sourcesArray = try {
+                json.getJSONObject("data").getJSONArray("sources")
+            } catch (e: Exception) {
+                return emptyList()
+            }
 
             val pages = mutableListOf<MangaPage>()
             for (i in 0 until sourcesArray.length()) {
-                val source = sourcesArray.getJSONObject(i)
-                val imagesArray = source.optJSONArray("images") ?: continue
-                
-                for (j in 0 until imagesArray.length()) {
-                    val imageUrl = imagesArray.optString(j)
-                    if (imageUrl.isNotBlank()) {
-                        pages.add(MangaPage(
-                            id = generateUid(imageUrl),
-                            url = imageUrl,
-                            preview = null,
-                            source = source as org.koitharu.kotatsu.parsers.model.MangaSource
-                        ))
+                try {
+                    val sourceObj = sourcesArray.getJSONObject(i)
+                    val imagesArray = sourceObj.optJSONArray("images") ?: continue
+                    
+                    for (j in 0 until imagesArray.length()) {
+                        val imageUrl = imagesArray.optString(j)
+                        if (imageUrl.isNotBlank()) {
+                            pages.add(MangaPage(
+                                id = generateUid(imageUrl),
+                                url = imageUrl,
+                                preview = null,
+                                source = source
+                            ))
+                        }
                     }
+                } catch (e: Exception) {
+                    // Skip this source and continue
                 }
             }
 
