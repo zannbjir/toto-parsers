@@ -8,7 +8,6 @@ import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.util.*
-import org.koitharu.kotatsu.parsers.util.json.*
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -29,74 +28,79 @@ internal class Bacami(context: MangaLoaderContext) :
             "https://$domain/custom-search/orderby/$orderPath/page/$page/"
         }
 
-        val html = webClient.httpGet(url).bodyString()
+        val response = webClient.httpGet(url)
+        val html = response.body?.string() ?: ""
         val document = Jsoup.parse(html)
+        val mangaList = mutableListOf<Manga>()
         
-        return document.select("article.genre-card").map { element ->
-            val link = element.selectFirst("div.genre-info > a")!!
+        document.select("article.genre-card").forEach { element ->
+            val link = element.selectFirst("div.genre-info > a")
             val cover = element.selectFirst("div.genre-cover > a > img")
-            val coverUrl = cover?.attr("abs:data-src")?.ifEmpty { cover.attr("abs:src") } ?: ""
-            
-            Manga(
-                id = generateUid(link.attr("href")),
-                url = link.attr("href").substringAfter(domain),
-                publicUrl = link.attr("href"),
-                title = link.text().trim(),
-                altTitles = emptySet(),
-                coverUrl = coverUrl,
-                largeCoverUrl = coverUrl,
-                authors = emptySet(),
-                tags = emptySet(),
-                state = null,
-                description = null,
-                contentRating = null,
-                source = source,
-                rating = RATING_UNKNOWN
-            )
+            if (link != null) {
+                val coverUrl = cover?.attr("abs:data-src")?.ifEmpty { cover.attr("abs:src") } ?: ""
+                mangaList.add(Manga(
+                    id = generateUid(link.attr("href")),
+                    url = link.attr("href").substringAfter(domain),
+                    publicUrl = link.attr("href"),
+                    title = link.text().trim(),
+                    altTitles = emptySet(),
+                    coverUrl = coverUrl,
+                    largeCoverUrl = coverUrl,
+                    authors = emptySet(),
+                    tags = emptySet(),
+                    state = null,
+                    description = null,
+                    contentRating = null,
+                    source = source,
+                    rating = RATING_UNKNOWN
+                ))
+            }
         }
+        return mangaList
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val html = webClient.httpGet(manga.publicUrl).bodyString()
+        val response = webClient.httpGet(manga.publicUrl)
+        val html = response.body?.string() ?: ""
         val document = Jsoup.parse(html)
-        val content = document.selectFirst("#komik > section.manga-content")!!
+        val chapters = mutableListOf<MangaChapter>()
         
-        val chapters = document.select("ol.chapter-list > li").map { element ->
-            val link = element.selectFirst("a.ch-link")!!
-            MangaChapter(
-                id = generateUid(link.attr("href")),
-                title = link.text().substringAfter("–").trim(),
-                url = link.attr("href").substringAfter(domain),
-                number = link.text().filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                uploadDate = parseDate(element.select("span.ch-date").text()),
-                scanlator = null,
-                branch = null,
-                source = source,
-                volume = 0
-            )
+        document.select("ol.chapter-list > li").forEach { element ->
+            val link = element.selectFirst("a.ch-link")
+            if (link != null) {
+                val title = link.text().substringAfter("–").trim()
+                chapters.add(MangaChapter(
+                    id = generateUid(link.attr("href")),
+                    title = title,
+                    url = link.attr("href").substringAfter(domain),
+                    number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L,
+                    scanlator = null,
+                    branch = null,
+                    source = source,
+                    volume = 0
+                ))
+            }
         }
 
         return manga.copy(
-            description = content.select("p.manga-description").text().trim(),
+            description = document.select("p.manga-description").text().trim(),
             state = if (document.selectFirst(".tamat-tag") != null) MangaState.FINISHED else MangaState.ONGOING,
             chapters = chapters
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val html = webClient.httpGet("https://$domain${chapter.url}").bodyString()
+        val response = webClient.httpGet("https://$domain${chapter.url}")
+        val html = response.body?.string() ?: ""
         val jsonStr = html.substringAfter("imageUrls:").substringBefore("],").plus("]")
         val jsonArray = JSONArray(jsonStr)
+        val pages = mutableListOf<MangaPage>()
         
-        return List(jsonArray.length()) { i ->
+        for (i in 0 until jsonArray.length()) {
             val imageUrl = jsonArray.getString(i)
-            MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source)
+            pages.add(MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source))
         }
-    }
-
-    private fun parseDate(date: String): Long {
-        return try {
-            SimpleDateFormat("dd MMMM, yyyy", Locale.ENGLISH).parse(date)?.time ?: 0L
-        } catch (e: Exception) { 0L }
+        return pages
     }
 }
