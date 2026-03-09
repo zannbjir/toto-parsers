@@ -22,8 +22,7 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 
 	override val configKeyDomain = ConfigKey.Domain("westmanga.tv")
 
-	override val domain = "westmanga.tv"
-	private val apiDomain = "westmanga.tv"
+	private val apiDomain = "westmanga.tv" 
 	private val accessKey = "WM_WEB_FRONT_END"
 	private val secretKey = "xxxoidj"
 
