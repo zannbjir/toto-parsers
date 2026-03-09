@@ -60,44 +60,46 @@ internal class Bacami(context: MangaLoaderContext) :
         return mangaList
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
-    val response = webClient.httpGet(manga.publicUrl)
-    val html = response.body?.string() ?: ""
-    val document = Jsoup.parse(html)
-    val content = document.selectFirst("#komik > section.manga-content")
-    
-    val chapters = mutableListOf<MangaChapter>()
-    document.select("ol.chapter-list > li").forEach { element ->
-        val link = element.selectFirst("a.ch-link")
-        if (link != null) {
-            val title = link.text().substringAfter("–").trim()
-            chapters.add(MangaChapter(
-                id = generateUid(link.attr("href")),
-                title = title,
-                url = link.attr("href").substringAfter(domain),
-                number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                uploadDate = 0L,
-                source = source
-            ))
+        override suspend fun getDetails(manga: Manga): Manga {
+        val response = webClient.httpGet(manga.publicUrl)
+        val html = response.body?.string() ?: ""
+        val document = Jsoup.parse(html)
+        val content = document.selectFirst("#komik > section.manga-content")
+        
+        val chapters = mutableListOf<MangaChapter>()
+        document.select("ol.chapter-list > li").forEach { element ->
+            val link = element.selectFirst("a.ch-link")
+            if (link != null) {
+                val title = link.text().substringAfter("–").trim()
+                chapters.add(MangaChapter(
+                    id = generateUid(link.attr("href")),
+                    title = title,
+                    url = link.attr("href").substringAfter(domain),
+                    number = title.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L,
+                    source = source,
+                    scanlator = null,
+                    branch = null,   
+                    volume = 0       
+                ))
+            }
         }
-    }
 
-    val tags = document.select("nav > span > a[href*='/genre/']").map {
-        MangaTag(
-            id = it.attr("href").substringAfter("/genre/").replace("/", ""),
-            title = it.text().trim(),
-            source = source
+        val tags = document.select("nav > span > a[href*='/genre/']").map {
+            MangaTag(
+                key = it.attr("href").substringAfter("/genre/").replace("/", ""), // Ganti id jadi key
+                title = it.text().trim(),
+                source = source
+            )
+        }.toSet()
+
+        return manga.copy(
+            description = document.select("p.manga-description").text().trim(),
+            tags = tags,
+            state = if (document.selectFirst(".tamat-tag") != null) MangaState.FINISHED else MangaState.ONGOING,
+            chapters = chapters
         )
-    }.toSet()
-
-    return manga.copy(
-        author = content?.select(".info-item:contains(Author) .info-value")?.text() ?: "",
-        description = document.select("p.manga-description").text().trim(),
-        tags = tags,
-        state = if (document.selectFirst(".tamat-tag") != null) MangaState.FINISHED else MangaState.ONGOING,
-        chapters = chapters
-    )
- }
+    }
     
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val response = webClient.httpGet("https://$domain${chapter.url}")
