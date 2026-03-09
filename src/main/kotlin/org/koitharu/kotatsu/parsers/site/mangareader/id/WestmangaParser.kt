@@ -22,7 +22,7 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 
 	override val configKeyDomain = ConfigKey.Domain("westmanga.tv")
 
-	private val domain = "westmanga.tv"
+	override val domain = "westmanga.tv"
 	private val apiDomain = "westmanga.tv"
 	private val accessKey = "WM_WEB_FRONT_END"
 	private val secretKey = "xxxoidj"
@@ -120,7 +120,6 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 				)
 			}
 		} catch (e: Exception) {
-			logcat(e) { "Failed to fetch list page" }
 			emptyList()
 		}
 	}
@@ -198,7 +197,6 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 				chapters = chapters.reversed(),
 			)
 		} catch (e: Exception) {
-			logcat(e) { "Failed to fetch details for ${manga.url}" }
 			manga
 		}
 	}
@@ -234,7 +232,6 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 			}
 			return pages
 		} catch (e: Exception) {
-			logcat(e) { "Failed to fetch pages for ${chapter.url}" }
 			emptyList()
 		}
 	}
@@ -258,7 +255,6 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 			genresCache = genres
 			genres
 		} catch (e: Exception) {
-			logcat(e) { "Failed to fetch genres" }
 			emptySet()
 		}
 	}
@@ -266,6 +262,7 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 	private fun createApiHeaders(url: okhttp3.HttpUrl): Headers {
 		val timestamp = (System.currentTimeMillis() / 1000).toString()
 		val message = "wm-api-request"
+		
 		val key = timestamp + "GET" + url.encodedPath + accessKey + secretKey
 
 		val mac = Mac.getInstance("HmacSHA256")
