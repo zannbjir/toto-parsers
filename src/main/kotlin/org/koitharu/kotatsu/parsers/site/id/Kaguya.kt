@@ -51,67 +51,56 @@ internal class Kaguya(context: MangaLoaderContext) :
         return mangaList
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
-    val response = webClient.httpGet(manga.publicUrl)
-    val html = response.body?.string() ?: ""
-    val document = Jsoup.parse(html)
-    
-    val mangaId = document.select("script#wp-manga-js-extra").html()
-        .substringAfter("\"manga_id\":\"").substringBefore("\"")
-    
-    val chapters = mutableListOf<MangaChapter>()
-    val ajaxUrl = "https://$domain/wp-admin/admin-ajax.php"
-    val form = mapOf(
-        "action" to "manga_get_chapters",
-        "manga" to mangaId
-    )
-    
-    val ajaxResponse = webClient.httpPost(ajaxUrl, form)
-    val ajaxHtml = ajaxResponse.body?.string() ?: ""
-    val ajaxDoc = Jsoup.parse(ajaxHtml)
-    
-    val items = ajaxDoc.select(".wp-manga-chapter")
-    if (items.isEmpty()) {
-        document.select(".wp-manga-chapter").forEach { element ->
-            val link = element.selectFirst("a")
-            if (link != null) {
-                val chName = link.text().trim()
-                chapters.add(MangaChapter(
-                    id = generateUid(link.attr("href")),
-                    title = chName,
-                    url = link.attr("href").substringAfter(domain),
-                    number = chName.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                    uploadDate = 0L,
-                    source = source
-                ))
-            }
-        }
-    } else {
-        items.forEach { element ->
-            val link = element.selectFirst("a")
-            if (link != null) {
-                val chName = link.text().trim()
-                chapters.add(MangaChapter(
-                    id = generateUid(link.attr("href")),
-                    title = chName,
-                    url = link.attr("href").substringAfter(domain),
-                    number = chName.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                    uploadDate = 0L,
-                    source = source
-                ))
-            }
-        }
-    }
+        override suspend fun getDetails(manga: Manga): Manga {
+        val response = webClient.httpGet(manga.publicUrl)
+        val html = response.body?.string() ?: ""
+        val document = Jsoup.parse(html)
+        
+        val mangaId = document.select("script#wp-manga-js-extra").html()
+            .substringAfter("\"manga_id\":\"").substringBefore("\"")
+        
+        val chapters = mutableListOf<MangaChapter>()
+        val ajaxUrl = "https://$domain/wp-admin/admin-ajax.php"
+        val form = mapOf("action" to "manga_get_chapters", "manga" to mangaId)
+        
+        val ajaxResponse = webClient.httpPost(ajaxUrl, form)
+        val ajaxHtml = ajaxResponse.body?.string() ?: ""
+        val ajaxDoc = Jsoup.parse(ajaxHtml)
+        
+        val items = ajaxDoc.select(".wp-manga-chapter")
+        val finalDocs = if (items.isEmpty()) document.select(".wp-manga-chapter") else items
 
-    return manga.copy(
-        description = document.select(".description-summary, .manga-excerpt").text().trim(),
-        tags = document.select(".genres-content a").map {
-            MangaTag(it.attr("href").substringAfterLast("/"), it.text(), source)
-        }.toSet(),
-        state = MangaState.ONGOING,
-        chapters = chapters.reversed()
-    )
- }
+        finalDocs.forEach { element ->
+            val link = element.selectFirst("a")
+            if (link != null) {
+                val chName = link.text().trim()
+                chapters.add(MangaChapter(
+                    id = generateUid(link.attr("href")),
+                    title = chName,
+                    url = link.attr("href").substringAfter(domain),
+                    number = chName.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L,
+                    source = source,
+                    scanlator = null,
+                    branch = null,
+                    volume = 0
+                ))
+            }
+        }
+
+        return manga.copy(
+            description = document.select(".description-summary, .manga-excerpt").text().trim(),
+            tags = document.select(".genres-content a").map {
+                MangaTag(
+                    key = it.attr("href").substringAfterLast("/").ifEmpty { "genre" }, // Ganti id jadi key
+                    title = it.text(),
+                    source = source
+                )
+            }.toSet(),
+            state = MangaState.ONGOING,
+            chapters = chapters.reversed()
+        )
+    }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val response = webClient.httpGet("https://$domain${chapter.url}")
