@@ -176,7 +176,6 @@ internal class SirenKomik(context: MangaLoaderContext) :
                 return pages
             }
 
-            // Fallback: Try AJAX method (Siren Komik specific)
             val postIdRegex = Regex("""chapter_id\s*=\s*(\d+)""")
             val postId = doc.select("script").mapNotNull { script ->
                 postIdRegex.find(script.data())?.groupValues?.get(1)
@@ -194,7 +193,6 @@ internal class SirenKomik(context: MangaLoaderContext) :
 
     private suspend fun fetchPagesViaAjax(postId: String): List<MangaPage> {
         return try {
-            // Use Map<String, String> instead of FormBody
             val formData = mapOf(
                 "action" to "get_image_json",
                 "post_id" to postId
@@ -202,37 +200,40 @@ internal class SirenKomik(context: MangaLoaderContext) :
 
             val response = webClient.httpPost("https://$domain/wp-admin/admin-ajax.php", formData, getRequestHeaders())
             val bodyStr = response.body?.string() ?: return emptyList()
-
-            // Parse JSON response
             val json = JSONObject(bodyStr)
-            
-            // Use try-catch for optional data access
-            val sourcesArray = try {
-                json.getJSONObject("data").getJSONArray("sources")
-            } catch (e: Exception) {
-                return emptyList()
-            }
-
             val pages = mutableListOf<MangaPage>()
-            for (i in 0 until sourcesArray.length()) {
-                try {
-                    val sourceObj = sourcesArray.getJSONObject(i)
-                    val imagesArray = sourceObj.optJSONArray("images") ?: continue
-                    
-                    for (j in 0 until imagesArray.length()) {
-                        val imageUrl = imagesArray.optString(j)
-                        if (imageUrl.isNotBlank()) {
-                            pages.add(MangaPage(
-                                id = generateUid(imageUrl),
-                                url = imageUrl,
-                                preview = null,
-                                source = source
-                            ))
+            
+            try {
+                val dataObj = json.optJSONObject("data")
+                if (dataObj != null) {
+                    val sourcesArray = dataObj.optJSONArray("sources")
+                    if (sourcesArray != null) {
+                        for (i in 0 until sourcesArray.length()) {
+                            try {
+                                val sourceObj = sourcesArray.optJSONObject(i)
+                                if (sourceObj != null) {
+                                    val imagesArray = sourceObj.optJSONArray("images")
+                                    if (imagesArray != null) {
+                                        // Iterate through images
+                                        for (j in 0 until imagesArray.length()) {
+                                            val imageUrl = imagesArray.optString(j)
+                                            if (imageUrl.isNotBlank()) {
+                                                pages.add(MangaPage(
+                                                    id = generateUid(imageUrl),
+                                                    url = imageUrl,
+                                                    preview = null,
+                                                    source = source
+                                                ))
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                            }
                         }
                     }
-                } catch (e: Exception) {
-                    // Skip this source and continue
                 }
+            } catch (e: Exception) {
             }
 
             pages
