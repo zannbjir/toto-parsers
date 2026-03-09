@@ -7,7 +7,6 @@ import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.util.*
-import java.text.SimpleDateFormat
 import java.util.*
 
 @MangaSourceParser("KAGUYA", "Kaguya", "id")
@@ -21,75 +20,85 @@ internal class Kaguya(context: MangaLoaderContext) :
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = "https://$domain/all-series/${if (page > 1) "page/$page/" else ""}?m_orderby=${if (order == SortOrder.POPULARITY) "views" else "latest"}"
-        val html = webClient.httpGet(url).bodyString()
+        val response = webClient.httpGet(url)
+        val html = response.body?.string() ?: ""
         val document = Jsoup.parse(html)
+        val mangaList = mutableListOf<Manga>()
 
-        return document.select(".page-item-detail").map { element ->
-            val link = element.selectFirst(".post-title a")!!
-            val coverUrl = element.selectFirst("img")?.let { it.attr("abs:data-src").ifEmpty { it.attr("abs:src") } } ?: ""
-            Manga(
-                id = generateUid(link.attr("href")),
-                url = link.attr("href").substringAfter(domain),
-                publicUrl = link.attr("href"),
-                title = link.text().trim(),
-                altTitles = emptySet(),
-                coverUrl = coverUrl,
-                largeCoverUrl = coverUrl,
-                authors = emptySet(),
-                tags = emptySet(),
-                state = null,
-                description = null,
-                contentRating = null,
-                source = source,
-                rating = RATING_UNKNOWN
-            )
+        document.select(".page-item-detail").forEach { element ->
+            val link = element.selectFirst(".post-title a")
+            if (link != null) {
+                val img = element.selectFirst("img")
+                val coverUrl = img?.attr("abs:data-src")?.ifEmpty { img.attr("abs:src") } ?: ""
+                mangaList.add(Manga(
+                    id = generateUid(link.attr("href")),
+                    url = link.attr("href").substringAfter(domain),
+                    publicUrl = link.attr("href"),
+                    title = link.text().trim(),
+                    altTitles = emptySet(),
+                    coverUrl = coverUrl,
+                    largeCoverUrl = coverUrl,
+                    authors = emptySet(),
+                    tags = emptySet(),
+                    state = null,
+                    description = null,
+                    contentRating = null,
+                    source = source,
+                    rating = RATING_UNKNOWN
+                ))
+            }
         }
+        return mangaList
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val html = webClient.httpGet(manga.publicUrl).bodyString()
-        val document = Jsoup.parse(html)
         val chapters = mutableListOf<MangaChapter>()
-        
-        val ajaxHtml = webClient.httpPost("${manga.publicUrl}ajax/chapters/", emptyMap<String, String>()).bodyString()
+        val ajaxResponse = webClient.httpPost("${manga.publicUrl}ajax/chapters/", emptyMap<String, String>())
+        val ajaxHtml = ajaxResponse.body?.string() ?: ""
         val ajaxDoc = Jsoup.parse(ajaxHtml)
         
         ajaxDoc.select(".wp-manga-chapter").forEach { element ->
-            val link = element.selectFirst("a")!!
-            chapters.add(MangaChapter(
-                id = generateUid(link.attr("href")),
-                title = link.text().trim(),
-                url = link.attr("href").substringAfter(domain),
-                number = link.text().filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
-                uploadDate = 0L,
-                scanlator = null,
-                branch = null,
-                source = source,
-                volume = 0
-            ))
+            val link = element.selectFirst("a")
+            if (link != null) {
+                val chName = link.text().trim()
+                chapters.add(MangaChapter(
+                    id = generateUid(link.attr("href")),
+                    title = chName,
+                    url = link.attr("href").substringAfter(domain),
+                    number = chName.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L,
+                    scanlator = null,
+                    branch = null,
+                    source = source,
+                    volume = 0
+                ))
+            }
         }
 
         return manga.copy(
-            description = document.select(".description-summary").text().trim(),
+            description = "Kaguya Manga",
             state = MangaState.ONGOING,
             chapters = chapters
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val html = webClient.httpGet("https://$domain${chapter.url}").bodyString()
+        val response = webClient.httpGet("https://$domain${chapter.url}")
+        val html = response.body?.string() ?: ""
         val document = Jsoup.parse(html)
+        val pages = mutableListOf<MangaPage>()
 
-        return document.select(".page-break img").map { element ->
+        document.select(".page-break img").forEach { element ->
             val imageUrl = if (element.hasAttr("data-aesir")) {
                 try {
-                    String(java.util.Base64.getDecoder().decode(element.attr("data-aesir").trim()))
+                    val decoded = java.util.Base64.getDecoder().decode(element.attr("data-aesir").trim())
+                    String(decoded)
                 } catch (e: Exception) { element.attr("abs:src") }
             } else {
                 element.attr("abs:src")
             }
-
-            MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source)
+            pages.add(MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source))
         }
+        return pages
     }
 }
