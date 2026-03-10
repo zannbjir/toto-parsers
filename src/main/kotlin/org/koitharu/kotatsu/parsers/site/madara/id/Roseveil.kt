@@ -1,7 +1,7 @@
 package org.koitharu.kotatsu.parsers.site.madara.id
 
+import okhttp3.Headers.Companion.toHeaders
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.*
@@ -18,16 +18,13 @@ internal class Roseveil(context: MangaLoaderContext) :
     override val withoutAjax = true
     override val listUrl = "comic/"
 
-    // Fix 403: Roseveil sangat ketat soal User-Agent
+    // User-Agent untuk tembus proteksi 403
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
     override fun parseMangaList(doc: Document): List<Manga> {
-        // Fokus ke article yang ada di list
         return doc.select("article, .page-item-detail").mapNotNull { item ->
             val link = item.selectFirst("h3 a, .post-title a") ?: return@mapNotNull null
             val href = link.attrAsRelativeUrl("href")
-            
-            // Fix Judul Angka: Ambil teks langsung dari anchor tag judul
             val title = link.text().trim()
             val cover = item.selectFirst("img")?.src() ?: ""
 
@@ -49,12 +46,12 @@ internal class Roseveil(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        // Fix 403: Kirim User-Agent secara manual di request
-        val response = webClient.httpGet(manga.publicUrl, mapOf("User-Agent" to userAgent))
+        // Konversi Map ke Headers agar diterima oleh httpGet
+        val customHeaders = mapOf("User-Agent" to userAgent).toHeaders()
+        val response = webClient.httpGet(manga.publicUrl, customHeaders)
         val doc = response.parseHtml()
 
         val chapters = mutableListOf<MangaChapter>()
-        // Selector chapter spesifik Roseveil
         doc.select("#lone-ch-list li.wp-manga-chapter, .wp-manga-chapter").forEachIndexed { i, element ->
             val link = element.selectFirst("a")
             if (link != null) {
@@ -78,15 +75,16 @@ internal class Roseveil(context: MangaLoaderContext) :
             title = doc.selectFirst("h1.text-4xl, .post-title h1")?.text()?.trim() ?: manga.title,
             description = doc.select(".tab-panel#panel-synopsis .prose, .description-summary").text().trim(),
             tags = doc.select(".genres-content a").map { 
-                MangaTag(it.attr("href").substringAfterLast("/").ifEmpty { "genre" }, it.text(), source) 
+                MangaTag(key = it.attr("href").substringAfterLast("/").ifEmpty { "genre" }, title = it.text(), source = source) 
             }.toSet(),
-            chapters = chapters.reversed(), // Chapter terbaru biasanya di bawah di HTML
+            chapters = chapters.reversed(),
             state = if (doc.text().contains("Ongoing", true)) MangaState.ONGOING else MangaState.FINISHED
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val response = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), mapOf("User-Agent" to userAgent))
+        val customHeaders = mapOf("User-Agent" to userAgent).toHeaders()
+        val response = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), customHeaders)
         val doc = response.parseHtml()
         
         return doc.select(".reading-content img, .page-break img").mapNotNull { img ->
@@ -100,3 +98,4 @@ internal class Roseveil(context: MangaLoaderContext) :
         }
     }
 }
+
