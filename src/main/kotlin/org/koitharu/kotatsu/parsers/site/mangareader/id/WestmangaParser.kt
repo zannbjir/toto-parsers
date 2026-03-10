@@ -22,7 +22,9 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 
 	override val configKeyDomain = ConfigKey.Domain("westmanga.tv")
 
-	private val apiDomain = "westmanga.tv" 
+	private val apiDomain: String
+		get() = "data.$domain"
+		
 	private val accessKey = "WM_WEB_FRONT_END"
 	private val secretKey = "xxxoidj"
 
@@ -58,210 +60,185 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		return try {
-			val url = "https://$apiDomain/api/contents".toHttpUrl().newBuilder().apply {
-				if (!filter.query.isNullOrEmpty()) {
-					addQueryParameter("q", filter.query)
-				}
-				addQueryParameter("page", page.toString())
-				addQueryParameter("per_page", "20")
-				addQueryParameter("type", "Comic")
-
-				when (order) {
-					SortOrder.UPDATED -> addQueryParameter("sort", "updated_at")
-					SortOrder.POPULARITY -> addQueryParameter("sort", "views")
-					SortOrder.ALPHABETICAL -> addQueryParameter("sort", "title")
-					SortOrder.NEWEST -> addQueryParameter("sort", "created_at")
-					else -> {}
-				}
-
-				filter.tags.forEach { tag ->
-					addQueryParameter("genre[]", tag.key)
-				}
-
-				filter.states.oneOrThrowIfMany()?.let {
-					addQueryParameter("status", when (it) {
-						MangaState.ONGOING -> "ongoing"
-						MangaState.FINISHED -> "completed"
-						MangaState.PAUSED -> "hiatus"
-						else -> return@let
-					})
-				}
-
-				filter.types.oneOrThrowIfMany()?.let {
-					addQueryParameter("country", when (it) {
-						ContentType.MANGA -> "JP"
-						ContentType.MANHWA -> "KR"
-						ContentType.MANHUA -> "CN"
-						else -> return@let
-					})
-				}
-			}.build()
-
-			val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
-			val mangaArray = response.optJSONArray("data") ?: return emptyList()
-
-			mangaArray.mapJSON { jo ->
-				val slug = jo.getString("slug")
-				Manga(
-					id = generateUid(slug),
-					title = jo.getString("title"),
-					altTitles = emptySet(),
-					url = "/comic/$slug/",
-					publicUrl = "https://$domain/comic/$slug",
-					rating = RATING_UNKNOWN,
-					contentRating = null,
-					coverUrl = jo.optString("cover", ""),
-					tags = emptySet(),
-					state = null,
-					authors = emptySet(),
-					source = source,
-				)
+		val url = "https://$apiDomain/api/contents".toHttpUrl().newBuilder().apply {
+			if (!filter.query.isNullOrEmpty()) {
+				addQueryParameter("q", filter.query)
 			}
-		} catch (e: Exception) {
-			emptyList()
+			addQueryParameter("page", page.toString())
+			addQueryParameter("per_page", "20")
+			addQueryParameter("type", "Comic")
+
+			when (order) {
+				SortOrder.UPDATED -> addQueryParameter("sort", "updated_at")
+				SortOrder.POPULARITY -> addQueryParameter("sort", "views")
+				SortOrder.ALPHABETICAL -> addQueryParameter("sort", "title")
+				SortOrder.NEWEST -> addQueryParameter("sort", "created_at")
+				else -> {}
+			}
+
+			filter.tags.forEach { tag ->
+				addQueryParameter("genre[]", tag.key)
+			}
+
+			filter.states.oneOrThrowIfMany()?.let {
+				addQueryParameter("status", when (it) {
+					MangaState.ONGOING -> "ongoing"
+					MangaState.FINISHED -> "completed"
+					MangaState.PAUSED -> "hiatus"
+					else -> return@let
+				})
+			}
+
+			filter.types.oneOrThrowIfMany()?.let {
+				addQueryParameter("country", when (it) {
+					ContentType.MANGA -> "JP"
+					ContentType.MANHWA -> "KR"
+					ContentType.MANHUA -> "CN"
+					else -> return@let
+				})
+			}
+		}.build()
+
+		val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
+		val mangaArray = response.optJSONArray("data") ?: return emptyList()
+
+		return mangaArray.mapJSON { jo ->
+			val slug = jo.getString("slug")
+			Manga(
+				id = generateUid(slug),
+				title = jo.getString("title"),
+				altTitles = emptySet(),
+				url = "/manga/$slug/",
+				publicUrl = "https://$domain/comic/$slug",
+				rating = RATING_UNKNOWN,
+				contentRating = null,
+				coverUrl = jo.getString("cover"),
+				tags = emptySet(),
+				state = null,
+				authors = emptySet(),
+				source = source,
+			)
 		}
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		return try {
-			val slug = manga.url.removeSurrounding("/comic/", "/")
-			val url = "https://$apiDomain/api/comic/$slug".toHttpUrl()
+		val slug = manga.url.removeSurrounding("/manga/", "/")
+		val url = "https://$apiDomain/api/comic/$slug".toHttpUrl()
 
-			val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
-			val data = response.getJSONObject("data")
+		val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
+		val data = response.getJSONObject("data")
 
-			val tags = buildSet {
-				when (data.getStringOrNull("country_id") ?: data.getStringOrNull("country")) {
-					"JP" -> add(MangaTag("Manga", "manga", source))
-					"CN" -> add(MangaTag("Manhua", "manhua", source))
-					"KR" -> add(MangaTag("Manhwa", "manhwa", source))
-				}
-				if (data.optBoolean("color", false)) {
-					add(MangaTag("Colored", "colored", source))
-				}
-				data.optJSONArray("genres")?.let { genres ->
-					for (i in 0 until genres.length()) {
-						val genre = genres.getJSONObject(i)
-						add(MangaTag(
-							title = genre.getString("name"),
-							key = genre.getInt("id").toString(),
-							source = source,
-						))
-					}
+		val tags = buildSet {
+			when (data.getStringOrNull("country_id") ?: data.getStringOrNull("country")) {
+				"JP" -> add(MangaTag("Manga", "manga", source))
+				"CN" -> add(MangaTag("Manhua", "manhua", source))
+				"KR" -> add(MangaTag("Manhwa", "manhwa", source))
+			}
+			if (data.optBoolean("color", false)) {
+				add(MangaTag("Colored", "colored", source))
+			}
+			data.optJSONArray("genres")?.let { genres ->
+				for (i in 0 until genres.length()) {
+					val genre = genres.getJSONObject(i)
+					add(MangaTag(
+						title = genre.getString("name"),
+						key = genre.getInt("id").toString(),
+						source = source,
+					))
 				}
 			}
-
-			val description = buildString {
-				data.getStringOrNull("sinopsis")?.let { synopsis ->
-					append(org.jsoup.Jsoup.parseBodyFragment(synopsis).wholeText().trim())
-				}
-				data.getStringOrNull("alternative_name")?.let { alt ->
-					append("\n\nAlternative Name: ")
-					append(alt.trim())
-				}
-			}
-
-			val state = when (data.getStringOrNull("status")) {
-				"ongoing" -> MangaState.ONGOING
-				"completed" -> MangaState.FINISHED
-				"hiatus" -> MangaState.PAUSED
-				else -> null
-			}
-
-			val chapters = data.optJSONArray("chapters")?.mapJSON { chapterObj ->
-				val chapterSlug = chapterObj.getString("slug")
-				val updatedAt = chapterObj.optJSONObject("updated_at")?.getLongOrDefault("time", 0L)
-					?: chapterObj.getLongOrDefault("updated_at", 0L)
-				MangaChapter(
-					id = generateUid(chapterSlug),
-					url = "/view/$chapterSlug/",
-					title = "Chapter ${chapterObj.getString("number")}",
-					number = chapterObj.getString("number").toFloatOrNull() ?: 0f,
-					volume = 0,
-					branch = null,
-					uploadDate = updatedAt * 1000,
-					scanlator = null,
-					source = source,
-				)
-			} ?: emptyList()
-
-			manga.copy(
-				title = data.getString("title"),
-				coverUrl = data.optString("cover", ""),
-				tags = tags,
-				authors = setOfNotNull(data.getStringOrNull("author")),
-				description = description.takeIf { it.isNotEmpty() },
-				state = state,
-				chapters = chapters.reversed(),
-			)
-		} catch (e: Exception) {
-			manga
 		}
+
+		val description = buildString {
+			data.getStringOrNull("sinopsis")?.let { synopsis ->
+				append(org.jsoup.Jsoup.parseBodyFragment(synopsis).wholeText().trim())
+			}
+			data.getStringOrNull("alternative_name")?.let { alt ->
+				append("\n\nAlternative Name: ")
+				append(alt.trim())
+			}
+		}
+
+		val state = when (data.getStringOrNull("status")) {
+			"ongoing" -> MangaState.ONGOING
+			"completed" -> MangaState.FINISHED
+			"hiatus" -> MangaState.PAUSED
+			else -> null
+		}
+
+		val chapters = data.optJSONArray("chapters")?.mapJSON { chapterObj ->
+			val chapterSlug = chapterObj.getString("slug")
+			val updatedAt = chapterObj.optJSONObject("updated_at")?.getLongOrDefault("time", 0L)
+				?: chapterObj.getLongOrDefault("updated_at", 0L)
+			MangaChapter(
+				id = generateUid(chapterSlug),
+				url = "/$chapterSlug/",
+				title = "Chapter ${chapterObj.getString("number")}",
+				number = chapterObj.getString("number").toFloatOrNull() ?: 0f,
+				volume = 0,
+				branch = null,
+				uploadDate = updatedAt * 1000,
+				scanlator = null,
+				source = source,
+			)
+		} ?: emptyList()
+
+		return manga.copy(
+			title = data.getString("title"),
+			coverUrl = data.getString("cover"),
+			tags = tags,
+			authors = setOfNotNull(data.getStringOrNull("author")),
+			description = description.takeIf { it.isNotEmpty() },
+			state = state,
+			chapters = chapters.reversed(),
+		)
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		return try {
-			val slug = chapter.url.removeSurrounding("/view/", "/")
-			val url = "https://$apiDomain/api/v/$slug".toHttpUrl()
+		val slug = chapter.url.removeSurrounding("/", "/")
+		val url = "https://$apiDomain/api/v/$slug".toHttpUrl()
 
-			val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
-			val images = response.optJSONObject("data")?.getJSONArray("images")
-				?: response.optJSONArray("images")
-				?: return emptyList()
+		val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
+		val images = response.optJSONObject("data")?.getJSONArray("images")
+			?: response.getJSONArray("images")
 
-			val pages = ArrayList<MangaPage>(images.length())
-			for (i in 0 until images.length()) {
-				val imageUrl = images.getString(i)
-				
-				val fullImageUrl = when {
-					imageUrl.startsWith("http") -> imageUrl
-					imageUrl.startsWith("/") -> "https://$domain$imageUrl"
-					else -> "https://$apiDomain/$imageUrl"
-				}
-				
-				pages.add(
-					MangaPage(
-						id = generateUid(fullImageUrl),
-						url = fullImageUrl,
-						preview = null,
-						source = source,
-					)
+		val pages = ArrayList<MangaPage>(images.length())
+		for (i in 0 until images.length()) {
+			val imageUrl = images.getString(i)
+			pages.add(
+				MangaPage(
+					id = generateUid(imageUrl),
+					url = imageUrl,
+					preview = null,
+					source = source,
 				)
-			}
-			return pages
-		} catch (e: Exception) {
-			emptyList()
+			)
 		}
+		return pages
 	}
 
 	private suspend fun fetchGenres(): Set<MangaTag> = mutex.withLock {
 		genresCache?.let { return@withLock it }
 
-		return try {
-			val url = "https://$apiDomain/api/contents/genres".toHttpUrl()
-			val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
-			val genresArray = response.optJSONArray("data") ?: return@withLock emptySet()
+		val url = "https://$apiDomain/api/contents/genres".toHttpUrl()
+		val response = webClient.httpGet(url, createApiHeaders(url)).parseJson()
+		val genresArray = response.optJSONArray("data") ?: return@withLock emptySet()
 
-			val genres = genresArray.mapJSONToSet { genreObj ->
-				MangaTag(
-					title = genreObj.getString("name"),
-					key = genreObj.getInt("id").toString(),
-					source = source,
-				)
-			}
-
-			genresCache = genres
-			genres
-		} catch (e: Exception) {
-			emptySet()
+		val genres = genresArray.mapJSONToSet { genreObj ->
+			MangaTag(
+				title = genreObj.getString("name"),
+				key = genreObj.getInt("id").toString(),
+				source = source,
+			)
 		}
+
+		genresCache = genres
+		return@withLock genres
 	}
 
 	private fun createApiHeaders(url: okhttp3.HttpUrl): Headers {
 		val timestamp = (System.currentTimeMillis() / 1000).toString()
 		val message = "wm-api-request"
-		
 		val key = timestamp + "GET" + url.encodedPath + accessKey + secretKey
 
 		val mac = Mac.getInstance("HmacSHA256")
@@ -273,8 +250,6 @@ internal class WestmangaParser(context: MangaLoaderContext) :
 		return Headers.Builder()
 			.add("User-Agent", config[userAgentKey])
 			.add("Referer", "https://$domain/")
-			.add("Accept-Language", "en-US,en;q=0.9")
-			.add("Accept-Encoding", "gzip, deflate, br")
 			.add("x-wm-request-time", timestamp)
 			.add("x-wm-accses-key", accessKey)
 			.add("x-wm-request-signature", signature)
