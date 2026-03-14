@@ -12,7 +12,7 @@ import java.util.*
 
 @MangaSourceParser("KAGUYA", "Kaguya", "id")
 internal class Kaguya(context: MangaLoaderContext) :
-    MadaraParser(context, MangaParserSource.KAGUYA, "kaguya.my.id") {
+    MadaraParser(context, MangaParserSource.KAGUYA, "01.kaguya.pro") {
 
     override val sourceLocale: Locale = Locale("id")
     override val datePattern = "dd MMMM yyyy"
