@@ -1,6 +1,7 @@
 package org.koitharu.kotatsu.parsers.site.madara.id
 
-import okhttp3.Headers.Companion.toHeaders
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
@@ -18,102 +19,44 @@ internal class Bacaman(context: MangaLoaderContext) :
     override val withoutAjax = false
     override val listUrl = "manga/"
 
-    override fun getRequestHeaders(): okhttp3.Headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Referer" to "https://$domain/"
-    ).toHeaders()
+    override fun getRequestHeaders(): Headers = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        .add("Referer", "https://$domain/")
+        .build()
 
-    override fun parseMangaList(doc: Document): List<Manga> {
-        return doc.select(".page-item-detail, .manga-item").mapNotNull { item ->
-            val link = item.selectFirst(".post-title a, h3 a") ?: return@mapNotNull null
-            val href = link.attrAsRelativeUrl("href")
-            
-            Manga(
-                id = generateUid(href),
-                url = href,
-                publicUrl = href.toAbsoluteUrl(domain),
-                coverUrl = item.selectFirst("img")?.src() ?: "",
-                title = link.text().trim(),
-                altTitles = emptySet(),
-                rating = RATING_UNKNOWN,
-                tags = emptySet(),
-                authors = emptySet(),
-                state = null,
-                source = source,
-                contentRating = ContentRating.SAFE
-            )
-        }
-    }
+    override val filterCapabilities = MangaListFilterCapabilities(
+        isSearchSupported = true,
+        isSearchWithFiltersSupported = true
+    )
 
-    override suspend fun getDetails(manga: Manga): Manga {
-        val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
-        val chapters = loadChapters(manga.url, doc)
-
-        return manga.copy(
-            description = doc.select(".description-summary, .summary__content").text().trim(),
-            tags = doc.select(".genres-content a").map {
-                MangaTag(
-                    key = it.attr("href").substringAfterLast("/").removeSuffix("/"), 
-                    title = it.text().trim(), 
-                    source = source
-                )
-            }.toSet(),
-            state = if (doc.text().contains("Ongoing", true)) MangaState.ONGOING else MangaState.FINISHED,
-            chapters = chapters
+    override suspend fun getFilterOptions() = MangaListFilterOptions(
+        availableTags = setOf(
+            MangaTag("3", "Action", source), MangaTag("106", "Adult", source),
+            MangaTag("8", "Adventure", source), MangaTag("4", "Comedy", source),
+            MangaTag("357", "Dark Battle", source), MangaTag("13", "Drama", source),
+            MangaTag("9", "Ecchi", source), MangaTag("347", "Elf", source),
+            MangaTag("10", "Fantasy", source), MangaTag("14", "Harem", source),
+            MangaTag("101", "Historical", source), MangaTag("60", "Horror", source),
+            MangaTag("345", "Isekai", source), MangaTag("346", "Magic", source),
+            MangaTag("303", "Martial Arts", source), MangaTag("5", "Mature", source),
+            MangaTag("351", "Monster", source), MangaTag("61", "Mystery", source),
+            MangaTag("348", "Overpowered Protagonist", source), MangaTag("122", "Psychological", source),
+            MangaTag("11", "Romance", source), MangaTag("31", "School Life", source),
+            MangaTag("40", "Sci-fi", source), MangaTag("6", "Seinen", source),
+            MangaTag("223", "Shoujo", source), MangaTag("16", "Shounen", source),
+            MangaTag("57", "Slice of Life", source), MangaTag("358", "Spin-off", source),
+            MangaTag("354", "Spirit Realm", source), MangaTag("160", "Sports", source),
+            MangaTag("25", "Supernatural", source), MangaTag("7", "Tragedy", source),
+            MangaTag("237", "Yaoi", source)
         )
-    }
+    )
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
-        return doc.select(".reading-content img, .page-break img, .read-container img").mapNotNull { img ->
-            val url = img.src() ?: return@mapNotNull null
-            MangaPage(id = generateUid(url), url = url, preview = null, source = source)
-        }
-    }
-
-    override fun onCreateFilters(): List<MangaListFilter> {
-        val genres = listOf(
-            "Action" to "3",
-            "Adult" to "106",
-            "Adventure" to "8",
-            "Comedy" to "4",
-            "Dark Battle" to "357",
-            "Drama" to "13",
-            "Ecchi" to "9",
-            "Elf" to "347",
-            "Fantasy" to "10",
-            "Harem" to "14",
-            "Historical" to "101",
-            "Horror" to "60",
-            "Isekai" to "345",
-            "Magic" to "346",
-            "Martial Arts" to "303",
-            "Mature" to "5",
-            "Monster" to "351",
-            "Mystery" to "61",
-            "Overpowered Protagonist" to "348",
-            "Psychological" to "122",
-            "Romance" to "11",
-            "School Life" to "31",
-            "Sci-fi" to "40",
-            "Seinen" to "6",
-            "Shoujo" to "223",
-            "Shounen" to "16",
-            "Slice of Life" to "57",
-            "Spin-off" to "358",
-            "Spirit Realm" to "354",
-            "Sports" to "160",
-            "Supernatural" to "25",
-            "Tragedy" to "7",
-            "Yaoi" to "237"
-        )
-
-        return listOf(
-            MangaListFilter.Select(
-                "Genre",
-                listOf(MangaListFilter.Option("All Genres", "")) + 
-                genres.map { MangaListFilter.Option(it.first, it.second) }
-            )
-        )
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+        val url = "https://$domain/$listUrl".toHttpUrl().newBuilder().apply {
+            if (page > 0) addPathSegments("page/${page + 1}/")
+            filter.query?.takeIf { it.isNotBlank() }?.let { addQueryParameter("s", it) }
+            filter.tags.forEach { addQueryParameter("genre[]", it.key) }
+        }.build()
+        return parseMangaList(webClient.httpGet(url, getRequestHeaders()).parseHtml())
     }
 }
