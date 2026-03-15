@@ -1,4 +1,4 @@
-package org.koitharu.kotatsu.parsers.site.mangareader.id
+package org.koitharu.kotatsu.parsers.site.madara.id
 
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
@@ -11,6 +11,7 @@ import org.koitharu.kotatsu.parsers.model.MangaListFilterOptions
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
 import org.koitharu.kotatsu.parsers.model.MangaState
 import org.koitharu.kotatsu.parsers.model.MangaTag
+import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
 import org.koitharu.kotatsu.parsers.model.SortOrder
 import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 import org.koitharu.kotatsu.parsers.util.*
@@ -86,6 +87,7 @@ internal class YuriLab(context: MangaLoaderContext) :
 
         val parsedAuthor = docs.selectFirst("div.author-content a")?.text()
         val parsedDescription = docs.select("div.summary__content p").joinToString("\n") { it.text() }
+        
         val parsedTags = docs.select("div.genres-content a").mapNotNull {
             val tagText = it.text().trim()
             if (tagText.isNotBlank()) MangaTag(title = tagText, key = tagText, source = source) else null
