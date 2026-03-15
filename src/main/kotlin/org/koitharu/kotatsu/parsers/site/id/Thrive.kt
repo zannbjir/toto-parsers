@@ -64,8 +64,9 @@ internal class Thrive(context: MangaLoaderContext) :
             if (id.isEmpty()) continue
 
             var coverUrl = jo.optString("cover", "")
-            if (coverUrl.isNotEmpty() && !coverUrl.startsWith("http")) {
-                coverUrl = "https://cdn.thrive.moe/covers/$id/$coverUrl.256.jpg"
+            if (coverUrl.isNotEmpty()) {
+                val fileName = coverUrl.substringAfterLast("/")
+                coverUrl = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
             }
 
             mangaList.add(Manga(
@@ -122,6 +123,7 @@ internal class Thrive(context: MangaLoaderContext) :
         val descObjId = mangaObj.optJSONObject("desc")?.optString("id", "") ?: ""
         val descFallback = mangaObj.optString("description", "")
         val description = if (descId.isNotEmpty()) descId else if (descObjId.isNotEmpty()) descObjId else descFallback
+
         val stateStr = mangaObj.optString("status", "")
         val state = if (stateStr.contains("completed", true) || stateStr.contains("tamat", true)) {
             MangaState.FINISHED 
@@ -138,17 +140,37 @@ internal class Thrive(context: MangaLoaderContext) :
         }
         
         val authors = mutableSetOf<String>()
-        val author = mangaObj.optString("author", "")
-        if (author.isNotBlank()) authors.add(author)
-        val artist = mangaObj.optString("artist", "")
-        if (artist.isNotBlank()) authors.add(artist)
+        listOf("author", "artist").forEach { key ->
+            val value = mangaObj.opt(key)
+            if (value is JSONArray) {
+                for (i in 0 until value.length()) {
+                    val a = value.optString(i, "").trim()
+                    if (a.isNotBlank()) authors.add(a)
+                }
+            } else if (value is String && value.isNotBlank()) {
+                if (value.startsWith("[") && value.endsWith("]")) {
+                    try {
+                        val arr = JSONArray(value)
+                        for (i in 0 until arr.length()) {
+                            val a = arr.optString(i, "").trim()
+                            if (a.isNotBlank()) authors.add(a)
+                        }
+                    } catch (e: Exception) {
+                        authors.add(value.trim())
+                    }
+                } else {
+                    authors.add(value.trim())
+                }
+            }
+        }
 
         var cover = mangaObj.optString("cover", "")
-        if (cover.isEmpty()) {
+        if (cover.isNotEmpty()) {
+            val fileName = cover.substringAfterLast("/")
+            val id = manga.url.substringAfterLast("/")
+            cover = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
+        } else {
             cover = manga.coverUrl ?: ""
-        }
-        if (cover.isNotEmpty() && !cover.startsWith("http")) {
-            cover = "https://cdn.thrive.moe/covers/${manga.url.substringAfterLast("/")}/$cover.256.jpg"
         }
 
         val title = mangaObj.optString("title", "")
