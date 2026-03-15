@@ -5,7 +5,6 @@ import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.ContentRating
 import org.koitharu.kotatsu.parsers.model.ContentType
 import org.koitharu.kotatsu.parsers.model.Manga
-import org.koitharu.kotatsu.parsers.model.MangaChapter
 import org.koitharu.kotatsu.parsers.model.MangaListFilter
 import org.koitharu.kotatsu.parsers.model.MangaListFilterOptions
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
@@ -68,23 +67,8 @@ internal class YuriLab(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
+        val baseManga = super.getDetails(manga)
         val docs = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
-        
-        val chapters = docs.select("li.wp-manga-chapter").mapChapters(reversed = false) { i, element ->
-            val a = element.selectFirst("a") ?: return@mapChapters null
-            MangaChapter(
-                id = generateUid(a.attrAsRelativeUrl("href")),
-                title = a.text().trim(),
-                url = a.attrAsRelativeUrl("href"),
-                number = Regex("""(?i)chapter\s*(\d+(?:\.\d+)?)""").find(a.text())?.groupValues?.get(1)?.toFloatOrNull() ?: (i + 1f),
-                volume = 0,
-                scanlator = null,
-                uploadDate = 0,
-                branch = null,
-                source = source
-            )
-        }
-
         val parsedAuthor = docs.selectFirst("div.author-content a")?.text()
         val parsedDescription = docs.select("div.summary__content p").joinToString("\n") { it.text() }
         
@@ -102,14 +86,12 @@ internal class YuriLab(context: MangaLoaderContext) :
             null
         }
 
-        return manga.copy(
-            description = parsedDescription,
-            authors = setOfNotNull(parsedAuthor),
-            tags = parsedTags,
-            state = state ?: manga.state,
-            coverUrl = docs.selectFirst("div.summary_image img")?.src() ?: manga.coverUrl,
-            chapters = chapters,
-            contentRating = ContentRating.ADULT
+        return baseManga.copy(
+            description = parsedDescription.takeIf { it.isNotBlank() } ?: baseManga.description,
+            authors = setOfNotNull(parsedAuthor).ifEmpty { baseManga.authors },
+            tags = parsedTags.ifEmpty { baseManga.tags },
+            state = state ?: baseManga.state,
+            coverUrl = docs.selectFirst("div.summary_image img")?.src() ?: baseManga.coverUrl
         )
     }
 }
