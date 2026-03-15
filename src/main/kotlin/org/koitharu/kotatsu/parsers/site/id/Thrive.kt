@@ -20,25 +20,41 @@ internal class Thrive(context: MangaLoaderContext) :
     
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
     override val filterCapabilities = MangaListFilterCapabilities(isSearchSupported = true)
-    override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions()
-
+    
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Referer" to "https://thrive.moe/"
+        "Referer" to "https://$domain/"
     ).toHeaders()
+
+    override suspend fun getFilterOptions(): MangaListFilterOptions {
+        val doc = webClient.httpGet("https://$domain/", headers).parseHtml()
+        val tags = doc.select("a[href^=/genre/]").mapNotNull {
+            val key = it.attr("href").substringAfterLast("/")
+            val title = it.selectFirst("span.mx-1")?.text()?.trim() ?: key
+            if (key.isNotBlank()) MangaTag(title, key, source) else null
+        }.toSet()
+        return MangaListFilterOptions(availableTags = tags)
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = if (!filter.query.isNullOrEmpty()) {
-            "https://$domain/search?route=${filter.query.urlEncoded()}"
+            "https://$domain/search?q=${filter.query.urlEncoded()}"
+        } else if (filter.tags.isNotEmpty()) {
+            val tag = filter.tags.first().key
+            "https://$domain/genre/$tag" + if (page > 0) "?page=${page + 1}" else ""
         } else {
             if (page > 0) "https://$domain/?page=${page + 1}" else "https://$domain/"
         }
 
         val doc = webClient.httpGet(url, headers).parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
-        val nextData = JSONObject(scriptData)
-        val pageProps = nextData.getJSONObject("props").getJSONObject("pageProps")
-        val mangaArray = pageProps.optJSONArray("terbaru") ?: pageProps.optJSONArray("res") ?: return emptyList()
+        val pageProps = JSONObject(scriptData).optJSONObject("props")?.optJSONObject("pageProps") ?: return emptyList()
+
+        val mangaArray = pageProps.optJSONArray("res") 
+            ?: pageProps.optJSONArray("data") 
+            ?: pageProps.optJSONArray("terbaru")
+            ?: findMangaArray(pageProps) 
+            ?: return emptyList()
 
         val mangaList = mutableListOf<Manga>()
         for (i in 0 until mangaArray.length()) {
@@ -46,15 +62,20 @@ internal class Thrive(context: MangaLoaderContext) :
             val id = jo.optString("id")
             if (id.isEmpty()) continue
 
+            var coverUrl = jo.optString("cover")
+            if (coverUrl.isNotEmpty() && !coverUrl.startsWith("http")) {
+                coverUrl = "https://cdn.thrive.moe/covers/$id/$coverUrl.256.jpg"
+            }
+
             mangaList.add(Manga(
                 id = generateUid(id),
                 title = jo.optString("title", "Untitled"),
                 altTitles = emptySet(),
                 url = "/title/$id",
                 publicUrl = "https://$domain/title/$id",
-                rating = RATING_UNKNOWN,
+                rating = Manga.RATING_UNKNOWN,
                 contentRating = ContentRating.SAFE,
-                coverUrl = jo.optString("cover"),
+                coverUrl = coverUrl,
                 tags = emptySet(),
                 state = null,
                 authors = emptySet(),
@@ -67,13 +88,18 @@ internal class Thrive(context: MangaLoaderContext) :
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.publicUrl, headers).parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return manga
-        val data = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps")
+        val pageProps = JSONObject(scriptData).optJSONObject("props")?.optJSONObject("pageProps") ?: return manga
+
+        val mangaObj = pageProps.optJSONObject("manga") ?: pageProps.optJSONObject("res") ?: findMangaObject(pageProps) ?: pageProps
+        val chaptersArray = pageProps.optJSONArray("chapterlist") ?: pageProps.optJSONArray("chapters") ?: findChaptersArray(pageProps)
 
         val chapters = mutableListOf<MangaChapter>()
-        data.optJSONArray("chapterlist")?.let { arr ->
+        chaptersArray?.let { arr ->
             for (i in 0 until arr.length()) {
                 val ch = arr.getJSONObject(i)
-                val chId = ch.getString("chapter_id")
+                val chId = ch.optString("chapter_id").ifEmpty { ch.optString("id") }
+                if (chId.isEmpty()) continue
+                
                 chapters.add(MangaChapter(
                     id = generateUid(chId),
                     title = ch.optString("chapter_title").ifEmpty { "Chapter ${ch.optString("chapter_number")}" },
@@ -88,9 +114,43 @@ internal class Thrive(context: MangaLoaderContext) :
             }
         }
 
+        val description = mangaObj.optString("desc_ID").ifEmpty { 
+            mangaObj.optJSONObject("desc")?.optString("id") 
+        }.ifEmpty { 
+            mangaObj.optString("description") 
+        }
+
+        val stateStr = mangaObj.optString("status")
+        val state = if (stateStr.contains("completed", true) || stateStr.contains("tamat", true)) {
+            MangaState.FINISHED 
+        } else {
+            MangaState.ONGOING
+        }
+
+        val tags = mutableSetOf<MangaTag>()
+        mangaObj.optJSONArray("tags")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val tName = arr.optString(i)
+                if (tName.isNotBlank()) tags.add(MangaTag(tName, tName, source))
+            }
+        }
+        
+        val authors = mutableSetOf<String>()
+        mangaObj.optString("author").takeIf { it.isNotBlank() }?.let { authors.add(it) }
+        mangaObj.optString("artist").takeIf { it.isNotBlank() }?.let { authors.add(it) }
+
+        var cover = mangaObj.optString("cover").ifEmpty { manga.coverUrl }
+        if (cover.isNotEmpty() && !cover.startsWith("http")) {
+            cover = "https://cdn.thrive.moe/covers/${manga.url.substringAfterLast("/")}/$cover.256.jpg"
+        }
+
         return manga.copy(
-            description = data.optString("desc_ID").ifEmpty { data.optJSONObject("desc")?.optString("id") },
-            state = if (data.optString("status").contains("completed", true)) MangaState.FINISHED else MangaState.ONGOING,
+            title = mangaObj.optString("title").ifEmpty { manga.title },
+            description = description,
+            state = state,
+            authors = authors,
+            tags = tags,
+            coverUrl = cover,
             chapters = chapters.sortedByDescending { it.number }
         )
     }
@@ -98,15 +158,69 @@ internal class Thrive(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain${chapter.url}", headers).parseHtml()
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
-        val data = JSONObject(scriptData).getJSONObject("props").getJSONObject("pageProps")
+        val pageProps = JSONObject(scriptData).optJSONObject("props")?.optJSONObject("pageProps") ?: return emptyList()
         
-        val prefix = data.optString("prefix")
-        val images = data.getJSONArray("image")
+        val pagesObj = findPagesObject(pageProps) ?: pageProps
+        val prefix = pagesObj.optString("prefix")
+        val images = pagesObj.optJSONArray("image") ?: pagesObj.optJSONArray("images") ?: return emptyList()
 
         return (0 until images.length()).map { i ->
-            val imageUrl = "https://cdn.thrive.moe/data/$prefix/${images.getString(i)}"
+            val img = images.getString(i)
+            val imageUrl = if (img.startsWith("http")) img else "https://cdn.thrive.moe/data/$prefix/$img"
             MangaPage(generateUid(imageUrl), imageUrl, null, source)
         }
+    }
+
+    private fun findMangaArray(obj: JSONObject): JSONArray? {
+        for (key in obj.keys()) {
+            val value = obj.opt(key)
+            if (value is JSONArray && value.length() > 0) {
+                val first = value.optJSONObject(0)
+                if (first != null && first.has("id") && first.has("title")) return value
+            } else if (value is JSONObject) {
+                val nested = findMangaArray(value)
+                if (nested != null) return nested
+            }
+        }
+        return null
+    }
+
+    private fun findChaptersArray(obj: JSONObject): JSONArray? {
+        for (key in obj.keys()) {
+            val value = obj.opt(key)
+            if (value is JSONArray && value.length() > 0) {
+                val first = value.optJSONObject(0)
+                if (first != null && (first.has("chapter_id") || first.has("chapter_number"))) return value
+            } else if (value is JSONObject) {
+                val nested = findChaptersArray(value)
+                if (nested != null) return nested
+            }
+        }
+        return null
+    }
+
+    private fun findMangaObject(obj: JSONObject): JSONObject? {
+        for (key in obj.keys()) {
+            val value = obj.opt(key)
+            if (value is JSONObject) {
+                if (value.has("desc_ID") || value.has("description") || value.has("status")) return value
+                val nested = findMangaObject(value)
+                if (nested != null) return nested
+            }
+        }
+        return null
+    }
+    
+    private fun findPagesObject(obj: JSONObject): JSONObject? {
+        if (obj.has("image") && obj.has("prefix")) return obj
+        for (key in obj.keys()) {
+            val value = obj.opt(key)
+            if (value is JSONObject) {
+                val nested = findPagesObject(value)
+                if (nested != null) return nested
+            }
+        }
+        return null
     }
 
     private fun parseDate(dateStr: String): Long {
