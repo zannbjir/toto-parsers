@@ -86,7 +86,6 @@ internal class YuriLab(context: MangaLoaderContext) :
 
         val parsedAuthor = docs.selectFirst("div.author-content a")?.text()
         val parsedDescription = docs.select("div.summary__content p").joinToString("\n") { it.text() }
-        
         val parsedTags = docs.select("div.genres-content a").mapNotNull {
             val tagText = it.text().trim()
             if (tagText.isNotBlank()) MangaTag(title = tagText, key = tagText, source = source) else null
