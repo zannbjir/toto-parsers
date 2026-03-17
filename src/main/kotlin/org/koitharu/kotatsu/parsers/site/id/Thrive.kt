@@ -8,7 +8,6 @@ import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
-import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
 import org.koitharu.kotatsu.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -64,7 +63,7 @@ internal class Thrive(context: MangaLoaderContext) :
             if (id.isEmpty()) continue
 
             var coverUrl = jo.optString("cover", "")
-            if (coverUrl.isNotEmpty()) {
+            if (coverUrl.isNotEmpty() && !coverUrl.startsWith("http")) {
                 val fileName = coverUrl.substringAfterLast("/")
                 coverUrl = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
             }
@@ -102,15 +101,21 @@ internal class Thrive(context: MangaLoaderContext) :
                 val chId = ch.optString("chapter_id", "").ifEmpty { ch.optString("id", "") }
                 if (chId.isEmpty()) continue
                 
-                val chTitle = ch.optString("chapter_title", "")
-                val chNum = ch.optString("chapter_number", "")
+                val chTitleRaw = ch.optString("chapter_title", "").ifEmpty { ch.optString("title", "") }
+                val chNum = ch.optString("chapter_number", "").ifEmpty { ch.optString("number", "") }
+                
+                val finalTitle = when {
+                    chTitleRaw.isNotBlank() -> chTitleRaw
+                    chNum.isNotBlank() -> "Chapter $chNum"
+                    else -> "Chapter ${arr.length() - i}"
+                }
                 
                 chapters.add(MangaChapter(
                     id = generateUid(chId),
-                    title = if (chTitle.isNotEmpty()) chTitle else "Chapter $chNum",
+                    title = finalTitle,
                     url = "/read/$chId",
                     number = chNum.toFloatOrNull() ?: 0f,
-                    uploadDate = parseDate(ch.optString("created_at", "")),
+                    uploadDate = parseDate(ch.optString("created_at", "").ifEmpty { ch.optString("date", "") }),
                     source = source,
                     scanlator = ch.optString("scanlator", ""),
                     branch = null,
@@ -165,11 +170,11 @@ internal class Thrive(context: MangaLoaderContext) :
         }
 
         var cover = mangaObj.optString("cover", "")
-        if (cover.isNotEmpty()) {
+        if (cover.isNotEmpty() && !cover.startsWith("http")) {
             val fileName = cover.substringAfterLast("/")
             val id = manga.url.substringAfterLast("/")
             cover = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
-        } else {
+        } else if (cover.isEmpty()) {
             cover = manga.coverUrl ?: ""
         }
 
@@ -182,18 +187,31 @@ internal class Thrive(context: MangaLoaderContext) :
             authors = authors,
             tags = tags,
             coverUrl = cover,
-            chapters = chapters.sortedByDescending { it.number }
+            chapters = chapters.sortedByDescending { it.number } 
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain${chapter.url}", headers).parseHtml()
+        
+        val imgElements = doc.select("div.w-auto.h-auto.flex > img")
+        if (imgElements.isNotEmpty()) {
+            return imgElements.mapNotNull { img ->
+                val src = img.attr("src")
+                if (src.isNotBlank()) MangaPage(generateUid(src), src, null, source) else null
+            }
+        }
+
         val scriptData = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
         val pageProps = JSONObject(scriptData).optJSONObject("props")?.optJSONObject("pageProps") ?: return emptyList()
         
         val pagesObj = findPagesObject(pageProps) ?: pageProps
         val prefix = pagesObj.optString("prefix", "")
-        val images = pagesObj.optJSONArray("image") ?: pagesObj.optJSONArray("images") ?: return emptyList()
+        
+        val images = pagesObj.optJSONArray("image") 
+            ?: pagesObj.optJSONArray("images") 
+            ?: pagesObj.optJSONArray("data")
+            ?: return emptyList()
 
         return (0 until images.length()).map { i ->
             val img = images.getString(i)
@@ -221,7 +239,7 @@ internal class Thrive(context: MangaLoaderContext) :
             val value = obj.opt(key)
             if (value is JSONArray && value.length() > 0) {
                 val first = value.optJSONObject(0)
-                if (first != null && (first.has("chapter_id") || first.has("chapter_number"))) return value
+                if (first != null && (first.has("chapter_id") || first.has("chapter_number") || first.has("id"))) return value
             } else if (value is JSONObject) {
                 val nested = findChaptersArray(value)
                 if (nested != null) return nested
@@ -234,7 +252,7 @@ internal class Thrive(context: MangaLoaderContext) :
         for (key in obj.keys()) {
             val value = obj.opt(key)
             if (value is JSONObject) {
-                if (value.has("desc_ID") || value.has("description") || value.has("status")) return value
+                if (value.has("desc_ID") || value.has("description") || value.has("status") || value.has("title")) return value
                 val nested = findMangaObject(value)
                 if (nested != null) return nested
             }
@@ -243,7 +261,7 @@ internal class Thrive(context: MangaLoaderContext) :
     }
     
     private fun findPagesObject(obj: JSONObject): JSONObject? {
-        if (obj.has("image") && obj.has("prefix")) return obj
+        if ((obj.has("image") || obj.has("images") || obj.has("data")) && obj.has("prefix")) return obj
         for (key in obj.keys()) {
             val value = obj.opt(key)
             if (value is JSONObject) {
@@ -255,6 +273,7 @@ internal class Thrive(context: MangaLoaderContext) :
     }
 
     private fun parseDate(dateStr: String): Long {
+        if (dateStr.isEmpty()) return 0L
         return try {
             val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
             sdf.timeZone = TimeZone.getTimeZone("UTC")
