@@ -89,7 +89,7 @@ internal class Kaguya(context: MangaLoaderContext) :
         } else if (parsedStatus?.contains("Completed", ignoreCase = true) == true || parsedStatus?.contains("End", ignoreCase = true) == true) {
             MangaState.FINISHED
         } else {
-            null // <--- PERBAIKAN ERROR 1: Diganti jadi null
+            null
         }
 
         val allChapters = mutableListOf<MangaChapter>()
@@ -119,7 +119,7 @@ internal class Kaguya(context: MangaLoaderContext) :
                         title = title,
                         url = url,
                         number = number,
-                        uploadDate = parseDate(dateText), // <--- Menggunakan fungsi parseDate di bawah
+                        uploadDate = parseDate(dateText),
                         source = source,
                         scanlator = "",
                         branch = null,
