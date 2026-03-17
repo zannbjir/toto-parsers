@@ -16,6 +16,7 @@ import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
 import org.koitharu.kotatsu.parsers.model.SortOrder
 import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 import org.koitharu.kotatsu.parsers.util.*
+import org.jsoup.nodes.Document
 import java.util.Base64
 import java.util.Locale
 
@@ -69,9 +70,9 @@ internal class Kaguya(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
-        val baseManga = super.getDetails(manga)
-        val docs = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+    override suspend fun getDetails(manga: Manga): Manga {   
+        val publicUrl = manga.url.toAbsoluteUrl(domain)
+        val docs = webClient.httpGet(publicUrl).parseHtml()
         
         val parsedAuthor = docs.selectFirst("div.author-content a")?.text()
         val parsedDescription = docs.select("div.summary__content p").joinToString("\n") { it.text() }
@@ -87,15 +88,64 @@ internal class Kaguya(context: MangaLoaderContext) :
         } else if (parsedStatus?.contains("Completed", ignoreCase = true) == true || parsedStatus?.contains("End", ignoreCase = true) == true) {
             MangaState.FINISHED
         } else {
-            null
+            MangaState.UNKNOWN
         }
 
-        return baseManga.copy(
-            description = parsedDescription.takeIf { it.isNotBlank() } ?: baseManga.description,
-            authors = setOfNotNull(parsedAuthor).ifEmpty { baseManga.authors },
-            tags = parsedTags.ifEmpty { baseManga.tags },
-            state = state ?: baseManga.state,
-            coverUrl = docs.selectFirst("div.summary_image img")?.src() ?: baseManga.coverUrl
+        val allChapters = mutableListOf<MangaChapter>()
+        var currentPage = 1
+        var hasNextPage = true
+        val mangaId = docs.selectFirst("div#manga-chapters-holder")?.attr("data-id") ?: ""
+        while (hasNextPage) {
+            val pageUrl = "$publicUrl?t=$currentPage"
+            val pageDocs = webClient.httpGet(pageUrl).parseHtml()
+            val chapterNodes = pageDocs.select("li.wp-manga-chapter")
+            if (chapterNodes.isEmpty()) {
+                hasNextPage = false
+            } else {
+                for (node in chapterNodes) {
+                    val a = node.selectFirst("a") ?: continue
+                    val url = a.attrAsRelativeUrl("href")
+                    val title = a.text().trim()
+                    val dateText = node.selectFirst("span.chapter-release-date i")?.text()?.trim() ?: ""
+                    val numMatch = Regex("""[0-9]+(\.[0-9]+)?""").findAll(title).lastOrNull()?.value
+                    val number = numMatch?.toFloatOrNull() ?: 0f
+
+                    allChapters.add(MangaChapter(
+                        id = generateUid(url),
+                        title = title,
+                        url = url,
+                        number = number,
+                        uploadDate = parseDate(dateText),
+                        source = source,
+                        scanlator = "",
+                        branch = null,
+                        volume = 0
+                    ))
+                }
+                
+                val pagination = pageDocs.selectFirst("div.pagination")
+                if (pagination != null) {
+                    val currentSpan = pagination.selectFirst("span.current")
+                    if (currentSpan?.nextElementSibling() != null && currentSpan.nextElementSibling()?.hasClass("page") == true) {
+                        currentPage++
+                    } else {
+                        hasNextPage = false
+                    }
+                } else {
+                    hasNextPage = false
+                }
+            }
+            
+            if (currentPage > 50) hasNextPage = false
+        }
+
+        return manga.copy(
+            description = parsedDescription.takeIf { it.isNotBlank() } ?: manga.description,
+            authors = setOfNotNull(parsedAuthor).ifEmpty { manga.authors },
+            tags = parsedTags.ifEmpty { manga.tags },
+            state = state,
+            coverUrl = docs.selectFirst("div.summary_image img")?.src() ?: manga.coverUrl,
+            chapters = allChapters.sortedByDescending { it.number }
         )
     }
 
