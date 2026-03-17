@@ -16,9 +16,10 @@ import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
 import org.koitharu.kotatsu.parsers.model.SortOrder
 import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 import org.koitharu.kotatsu.parsers.util.*
-import org.jsoup.nodes.Document
+import java.text.SimpleDateFormat
 import java.util.Base64
 import java.util.Locale
+import java.util.TimeZone
 
 @MangaSourceParser("KAGUYA", "Kaguya", "id")
 internal class Kaguya(context: MangaLoaderContext) :
@@ -70,7 +71,7 @@ internal class Kaguya(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {   
+    override suspend fun getDetails(manga: Manga): Manga {
         val publicUrl = manga.url.toAbsoluteUrl(domain)
         val docs = webClient.httpGet(publicUrl).parseHtml()
         
@@ -88,17 +89,19 @@ internal class Kaguya(context: MangaLoaderContext) :
         } else if (parsedStatus?.contains("Completed", ignoreCase = true) == true || parsedStatus?.contains("End", ignoreCase = true) == true) {
             MangaState.FINISHED
         } else {
-            MangaState.UNKNOWN
+            null // <--- PERBAIKAN ERROR 1: Diganti jadi null
         }
 
         val allChapters = mutableListOf<MangaChapter>()
         var currentPage = 1
         var hasNextPage = true
-        val mangaId = docs.selectFirst("div#manga-chapters-holder")?.attr("data-id") ?: ""
+        
         while (hasNextPage) {
             val pageUrl = "$publicUrl?t=$currentPage"
             val pageDocs = webClient.httpGet(pageUrl).parseHtml()
+            
             val chapterNodes = pageDocs.select("li.wp-manga-chapter")
+            
             if (chapterNodes.isEmpty()) {
                 hasNextPage = false
             } else {
@@ -107,6 +110,7 @@ internal class Kaguya(context: MangaLoaderContext) :
                     val url = a.attrAsRelativeUrl("href")
                     val title = a.text().trim()
                     val dateText = node.selectFirst("span.chapter-release-date i")?.text()?.trim() ?: ""
+
                     val numMatch = Regex("""[0-9]+(\.[0-9]+)?""").findAll(title).lastOrNull()?.value
                     val number = numMatch?.toFloatOrNull() ?: 0f
 
@@ -115,7 +119,7 @@ internal class Kaguya(context: MangaLoaderContext) :
                         title = title,
                         url = url,
                         number = number,
-                        uploadDate = parseDate(dateText),
+                        uploadDate = parseDate(dateText), // <--- Menggunakan fungsi parseDate di bawah
                         source = source,
                         scanlator = "",
                         branch = null,
@@ -169,6 +173,18 @@ internal class Kaguya(context: MangaLoaderContext) :
             } else {
                 null
             }
+        }
+    }
+
+
+    private fun parseDate(dateStr: String): Long {
+        if (dateStr.isEmpty()) return 0L
+        return try {
+            val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+            sdf.timeZone = TimeZone.getTimeZone("UTC")
+            sdf.parse(dateStr)?.time ?: 0L
+        } catch (e: Exception) {
+            0L
         }
     }
 }
