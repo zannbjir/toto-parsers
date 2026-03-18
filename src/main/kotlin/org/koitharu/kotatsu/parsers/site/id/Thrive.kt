@@ -64,8 +64,7 @@ internal class Thrive(context: MangaLoaderContext) :
 
             var coverUrl = jo.optString("cover", "")
             if (coverUrl.isNotEmpty() && !coverUrl.startsWith("http")) {
-                val fileName = coverUrl.substringAfterLast("/")
-                coverUrl = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
+                coverUrl = if (coverUrl.startsWith("/")) "https://cdn.thrive.moe$coverUrl" else "https://cdn.thrive.moe/$coverUrl"
             }
 
             mangaList.add(Manga(
@@ -171,9 +170,7 @@ internal class Thrive(context: MangaLoaderContext) :
 
         var cover = mangaObj.optString("cover", "")
         if (cover.isNotEmpty() && !cover.startsWith("http")) {
-            val fileName = cover.substringAfterLast("/")
-            val id = manga.url.substringAfterLast("/")
-            cover = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
+            cover = if (cover.startsWith("/")) "https://cdn.thrive.moe$cover" else "https://cdn.thrive.moe/$cover"
         } else if (cover.isEmpty()) {
             cover = manga.coverUrl ?: ""
         }
@@ -194,11 +191,11 @@ internal class Thrive(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain${chapter.url}", headers).parseHtml()
         
-        val imgElements = doc.select("div.w-auto.h-auto.flex > img")
+        val imgElements = doc.select("img.mx-auto.block, img[src*=/data/]")
         if (imgElements.isNotEmpty()) {
             return imgElements.mapNotNull { img ->
                 val src = img.attr("src")
-                if (src.isNotBlank()) MangaPage(generateUid(src), src, null, source) else null
+                if (src.isNotBlank() && src.startsWith("http")) MangaPage(generateUid(src), src, null, source) else null
             }
         }
 
