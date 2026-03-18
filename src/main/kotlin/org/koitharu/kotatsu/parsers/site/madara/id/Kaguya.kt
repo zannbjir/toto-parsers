@@ -1,5 +1,6 @@
 package org.koitharu.kotatsu.parsers.site.madara.id
 
+import okhttp3.Headers.Companion.toHeaders
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.*
@@ -59,7 +60,6 @@ internal class Kaguya(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        // Ambil info dasar (Judul, cover, author) pakai fungsi bawaan Kotatsu biar stabil
         val baseManga = super.getDetails(manga)
         val publicUrl = manga.url.toAbsoluteUrl(domain)
         val docs = webClient.httpGet(publicUrl).parseHtml()
@@ -67,21 +67,20 @@ internal class Kaguya(context: MangaLoaderContext) :
         val allChapters = mutableListOf<MangaChapter>()
         val mangaId = docs.selectFirst("#manga-chapters-holder")?.attr("data-id")
         
-        // Pancing chapter keluar pakai AJAX Madara
         if (!mangaId.isNullOrEmpty()) {
             val formBody = okhttp3.FormBody.Builder()
                 .add("action", "manga_get_chapters")
                 .add("manga", mangaId)
                 .build()
             
-            val xhrHeaders = headers.newBuilder()
-                .add("X-Requested-With", "XMLHttpRequest")
-                .build()
+            val xhrHeaders = mapOf(
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to publicUrl
+            ).toHeaders()
 
             val ajaxDocs = webClient.httpPost("https://$domain/wp-admin/admin-ajax.php", formBody, xhrHeaders).parseHtml()
             allChapters.addAll(parseChapters(ajaxDocs))
             
-            // Cek Pagination di dalam hasil AJAX
             val pagination = ajaxDocs.selectFirst("div.pagination")
             if (pagination != null) {
                 val lastPage = pagination.select("a[data-page]").mapNotNull { it.attr("data-page").toIntOrNull() }.maxOrNull() ?: 1
@@ -92,7 +91,6 @@ internal class Kaguya(context: MangaLoaderContext) :
             }
         }
 
-        // Fallback kalau AJAX mati
         if (allChapters.isEmpty()) {
             allChapters.addAll(parseChapters(docs))
         }
