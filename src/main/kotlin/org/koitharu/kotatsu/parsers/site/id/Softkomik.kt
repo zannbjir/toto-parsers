@@ -22,30 +22,23 @@ internal class Softkomik(context: MangaLoaderContext) :
     private val coverCdn = "https://cover.softdevices.my.id/softkomik-cover"
     private val cdnUrls = listOf(
         "https://psy1.komik.im",
-        "https://image.komik.im/softkomik",
         "https://cd1.softkomik.online/softkomik",
         "https://f1.softkomik.com/file/softkomik-image",
         "https://img.softdevices.my.id/softkomik-image",
         "https://image.softkomik.com/softkomik"
     )
 
-    private var sessionToken: String? = null
-    private var sessionSign: String? = null
-    private var sessionExpiry: Long = 0
-
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST, SortOrder.POPULARITY)
     override val filterCapabilities = MangaListFilterCapabilities(isSearchSupported = true)
-    
+
     private val baseHeaders = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Referer" to "https://$domain/"
     ).toHeaders()
 
-    private suspend fun ensureSession() {
-        if (System.currentTimeMillis() < sessionExpiry && sessionToken != null) return
-
-        val apiHeaders = mapOf(
+    private suspend fun getAuthHeaders(): okhttp3.Headers {
+        val apiReqHeaders = mapOf(
             "Accept" to "application/json",
             "Content-Type" to "application/json",
             "X-Requested-With" to "XMLHttpRequest",
@@ -54,28 +47,28 @@ internal class Softkomik(context: MangaLoaderContext) :
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ).toHeaders()
 
+        var token = ""
+        var sign = ""
+
         try {
             webClient.httpGet("https://$domain/", baseHeaders)
-            webClient.httpGet("https://$domain/api/me", apiHeaders)
-            val response = webClient.httpGet("https://$domain/api/sessions", apiHeaders).parseJson()
+            webClient.httpGet("https://$domain/api/me", apiReqHeaders)
             
-            sessionToken = response.optString("token", "")
-            sessionSign = response.optString("sign", "")
-            sessionExpiry = response.optLong("ex", 0L)
-            
+            val responseText = webClient.httpGet("https://$domain/api/sessions", apiReqHeaders).body?.string()
+            if (!responseText.isNullOrEmpty()) {
+                val json = JSONObject(responseText)
+                token = json.optString("token", "")
+                sign = json.optString("sign", "")
+            }
         } catch (e: Exception) {
         }
-    }
 
-    private suspend fun getApiHeaders(): okhttp3.Headers {
-        ensureSession() // Pastikan selalu punya sesi sebelum memanggil API
-        
         return mapOf(
             "Accept" to "application/json",
             "Origin" to "https://$domain",
             "Referer" to "https://$domain/",
-            "X-Token" to (sessionToken ?: ""),
-            "X-Sign" to (sessionSign ?: ""),
+            "X-Token" to token,
+            "X-Sign" to sign,
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ).toHeaders()
     }
@@ -99,8 +92,17 @@ internal class Softkomik(context: MangaLoaderContext) :
             }.build()
         }
 
-        val requestHeaders = if (isSearch) getApiHeaders() else baseHeaders.newBuilder().add("rsc", "1").build()
-        val jsonResponse = webClient.httpGet(url, requestHeaders).parseJson()
+        val requestHeaders = if (isSearch) getAuthHeaders() else baseHeaders.newBuilder().add("rsc", "1").build()
+        
+        // Membaca body sebagai string dulu karena kadang web HTML ngembaliin string mentah
+        val responseBody = webClient.httpGet(url, requestHeaders).body?.string() ?: return emptyList()
+
+        val jsonResponse = try {
+            JSONObject(responseBody)
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        
         val dataArray = jsonResponse.optJSONArray("data") 
             ?: jsonResponse.optJSONObject("data")?.optJSONArray("data") 
             ?: return emptyList()
@@ -132,18 +134,18 @@ internal class Softkomik(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val authHeaders = getApiHeaders()
+        val authHeaders = getAuthHeaders()
         val slug = manga.url.substringAfterLast("/")
         
-        // Mengambil Detail Komik
         val detailUrl = "$apiUrl/komik/$slug"
-        val detailResponse = webClient.httpGet(detailUrl, authHeaders).parseJson()
-        val detailData = detailResponse.optJSONObject("data") ?: return manga
         
-        // Mengambil List Chapter
+        val detailResponse = webClient.httpGet(detailUrl, authHeaders).body?.string() ?: return manga
+        val detailJson = try { JSONObject(detailResponse) } catch (e: Exception) { return manga }
+        val detailData = detailJson.optJSONObject("data") ?: return manga
+        
         val chapterUrl = "$apiUrl/komik/$slug/chapter?limit=9999"
-        val chapterResponse = webClient.httpGet(chapterUrl, authHeaders).parseJson()
-        val chaptersArray = chapterResponse.optJSONArray("chapter") ?: JSONArray()
+        val chapterResponse = webClient.httpGet(chapterUrl, authHeaders).body?.string()
+        val chaptersArray = try { JSONObject(chapterResponse ?: "{}").optJSONArray("chapter") ?: JSONArray() } catch (e: Exception) { JSONArray() }
 
         val tags = mutableSetOf<MangaTag>()
         detailData.optJSONArray("Genre")?.let { arr ->
@@ -187,11 +189,15 @@ internal class Softkomik(context: MangaLoaderContext) :
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val rscHeaders = baseHeaders.newBuilder().add("rsc", "1").build()
         
-        val doc = webClient.httpGet("https://$domain${chapter.url}", rscHeaders).parseHtml()
-        val nextDataStr = doc.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
-        val nextData = JSONObject(nextDataStr)
+        val htmlContent = webClient.httpGet("https://$domain${chapter.url}", rscHeaders).body?.string() ?: return emptyList()
+        
+        val nextDataMatch = Regex("""<script id="__NEXT_DATA__" type="application/json">(.+?)</script>""").find(htmlContent)
+        val nextDataStr = nextDataMatch?.groupValues?.get(1) ?: return emptyList()
+        
+        val nextData = try { JSONObject(nextDataStr) } catch (e: Exception) { return emptyList() }
         val pageProps = nextData.optJSONObject("props")?.optJSONObject("pageProps") ?: return emptyList()
         val chapterData = pageProps.optJSONObject("data") ?: pageProps
+
         var imagesArray = chapterData.optJSONArray("imageSrc") ?: JSONArray()
         
         if (imagesArray.length() == 0) {
@@ -203,8 +209,9 @@ internal class Softkomik(context: MangaLoaderContext) :
                 val imgApiUrl = "$apiUrl/komik/$slug/chapter/$chNum/img/$id"
                 
                 try {
-                    val imgRes = webClient.httpGet(imgApiUrl, getApiHeaders()).parseJson()
-                    imagesArray = imgRes.optJSONArray("imageSrc") ?: JSONArray()
+                    val imgRes = webClient.httpGet(imgApiUrl, getAuthHeaders()).body?.string()
+                    val imgJson = JSONObject(imgRes ?: "{}")
+                    imagesArray = imgJson.optJSONArray("imageSrc") ?: JSONArray()
                 } catch (e: Exception) {
                 }
             }
@@ -212,6 +219,7 @@ internal class Softkomik(context: MangaLoaderContext) :
 
         val isInter2 = chapterData.optBoolean("storageInter2", false)
         val host = if (isInter2) cdnUrls[3] else cdnUrls[1]
+
         val pages = mutableListOf<MangaPage>()
         for (i in 0 until imagesArray.length()) {
             val imgPath = imagesArray.getString(i).removePrefix("/")
