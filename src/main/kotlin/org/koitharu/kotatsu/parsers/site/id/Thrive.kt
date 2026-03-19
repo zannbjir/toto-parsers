@@ -22,7 +22,7 @@ internal class Thrive(context: MangaLoaderContext) :
     override val filterCapabilities = MangaListFilterCapabilities(isSearchSupported = true)
     
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
         "Referer" to "https://$domain/"
     ).toHeaders()
 
@@ -63,8 +63,9 @@ internal class Thrive(context: MangaLoaderContext) :
             if (id.isEmpty()) continue
 
             var coverUrl = jo.optString("cover", "")
-            if (coverUrl.isNotEmpty() && !coverUrl.startsWith("http")) {
-                coverUrl = if (coverUrl.startsWith("/")) "https://cdn.thrive.moe$coverUrl" else "https://cdn.thrive.moe/$coverUrl"
+            if (coverUrl.isNotEmpty()) {
+                val fileName = coverUrl.substringAfterLast("/")
+                coverUrl = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
             }
 
             mangaList.add(Manga(
@@ -100,14 +101,12 @@ internal class Thrive(context: MangaLoaderContext) :
                 val chId = ch.optString("chapter_id", "").ifEmpty { ch.optString("id", "") }
                 if (chId.isEmpty()) continue
                 
-
-                val chTitleRaw = ch.optString("chapter_title", "").ifEmpty { ch.optString("title", "") }
+                val rawTitle = ch.optString("chapter_title", "").ifEmpty { ch.optString("title", "") }.trim()
                 val chNum = ch.optString("chapter_number", "").ifEmpty { ch.optString("number", "") }
-                
                 val finalTitle = when {
-                    chTitleRaw.isNotBlank() -> chTitleRaw
-                    chNum.isNotBlank() -> "Chapter $chNum"
-                    else -> "Chapter ${arr.length() - i}"
+                    rawTitle.equals("null", ignoreCase = true) || rawTitle.isEmpty() -> "Chapter $chNum"
+                    rawTitle.startsWith("Chapter", ignoreCase = true) -> rawTitle
+                    else -> "Chapter $chNum - $rawTitle"
                 }
                 
                 chapters.add(MangaChapter(
@@ -130,11 +129,7 @@ internal class Thrive(context: MangaLoaderContext) :
         val description = if (descId.isNotEmpty()) descId else if (descObjId.isNotEmpty()) descObjId else descFallback
 
         val stateStr = mangaObj.optString("status", "")
-        val state = if (stateStr.contains("completed", true) || stateStr.contains("tamat", true)) {
-            MangaState.FINISHED 
-        } else {
-            MangaState.ONGOING
-        }
+        val state = if (stateStr.contains("completed", true) || stateStr.contains("tamat", true)) MangaState.FINISHED else MangaState.ONGOING
 
         val tags = mutableSetOf<MangaTag>()
         mangaObj.optJSONArray("tags")?.let { arr ->
@@ -170,9 +165,11 @@ internal class Thrive(context: MangaLoaderContext) :
         }
 
         var cover = mangaObj.optString("cover", "")
-        if (cover.isNotEmpty() && !cover.startsWith("http")) {
-            cover = if (cover.startsWith("/")) "https://cdn.thrive.moe$cover" else "https://cdn.thrive.moe/$cover"
-        } else if (cover.isEmpty()) {
+        if (cover.isNotEmpty()) {
+            val fileName = cover.substringAfterLast("/")
+            val id = manga.url.substringAfterLast("/")
+            cover = "https://cdn.thrive.moe/covers/$id/$fileName.256.jpg"
+        } else {
             cover = manga.coverUrl ?: ""
         }
 
@@ -185,14 +182,14 @@ internal class Thrive(context: MangaLoaderContext) :
             authors = authors,
             tags = tags,
             coverUrl = cover,
-            chapters = chapters.sortedByDescending { it.number }
+            chapters = chapters.sortedBy { it.number } 
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet("https://$domain${chapter.url}", headers).parseHtml()
         
-        val imgElements = doc.select("img.mx-auto.block, img[src*=/data/]")
+        val imgElements = doc.select("div.w-auto.h-auto.flex > img, img.mx-auto.block")
         if (imgElements.isNotEmpty()) {
             return imgElements.mapNotNull { img ->
                 val src = img.attr("src")
