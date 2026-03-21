@@ -21,6 +21,7 @@ internal abstract class WeebDexParser(
     override val configKeyDomain = ConfigKey.Domain("weebdex.org")
     private val apiUrl = "https://api.weebdex.org/"
     private val coverCdnUrl = "https://srv.notdelta.xyz/"
+    private val dataCdnUrl = "${coverCdnUrl}data/"
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
@@ -406,23 +407,20 @@ internal abstract class WeebDexParser(
     )
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        // Extract chapter ID from URL: /manga/{mangaId}/chapter/{chapterId}
         val chapterId = chapter.url.substringAfterLast("/")
-
-        // Fetch chapter data from API
         val json = webClient.httpGet("${apiUrl}chapter/$chapterId").parseJson()
+        val pagesArray = json.optJSONArray("data_optimized")
+            ?: json.optJSONArray("data")
+            ?: JSONArray()
 
-        // Get the CDN node URL
-        val node = json.getString("node")
+        return (0 until pagesArray.length()).mapNotNull { i ->
+            val filename = when (val page = pagesArray.opt(i)) {
+                is JSONObject -> page.optString("name")
+                is String -> page
+                else -> null
+            }?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
 
-        // Prefer optimized webp images, fallback to original data
-        val pagesArray = json.optJSONArray("data_optimized") ?: json.getJSONArray("data")
-
-        return (0 until pagesArray.length()).map { i ->
-            val pageObj = pagesArray.getJSONObject(i)
-            val filename = pageObj.getString("name")
-            val pageUrl = "$node/data/$chapterId/$filename"
-
+            val pageUrl = "$dataCdnUrl$chapterId/$filename"
             MangaPage(
                 id = generateUid(pageUrl),
                 url = pageUrl,
