@@ -219,7 +219,18 @@ internal abstract class InitMangaParser(
 	}
 
 	private fun parseMangaList(document: Document): List<Manga> {
-		return document.select("div.uk-panel").mapNotNull { panel ->
+		val panels = document.select("div.manga-item-grid > div.uk-panel")
+			.ifEmpty { document.select("div.uk-panel") }
+			.filterNot { panel ->
+				panel.hasClass("manga-item-ranking") ||
+					panel.parents().any { parent ->
+						parent.id() == "im-sidebar" ||
+							parent.classNames().contains("sidebar-widget") ||
+							parent.classNames().contains("top-manga-widget")
+					}
+			}
+
+		return panels.mapNotNull { panel ->
 			val link = panel.findSeriesLink() ?: return@mapNotNull null
 			val relativeUrl = link.attrAsRelativeUrlOrNull("href") ?: return@mapNotNull null
 			val title = panel.extractSeriesTitle(link)

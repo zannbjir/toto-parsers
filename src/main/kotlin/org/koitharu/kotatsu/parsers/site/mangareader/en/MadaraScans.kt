@@ -1,5 +1,6 @@
 package org.koitharu.kotatsu.parsers.site.mangareader.en
 
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
@@ -8,6 +9,7 @@ import org.koitharu.kotatsu.parsers.model.ContentRating
 import org.koitharu.kotatsu.parsers.model.Manga
 import org.koitharu.kotatsu.parsers.model.MangaChapter
 import org.koitharu.kotatsu.parsers.model.MangaListFilterCapabilities
+import org.koitharu.kotatsu.parsers.model.MangaPage
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
 import org.koitharu.kotatsu.parsers.model.MangaState
 import org.koitharu.kotatsu.parsers.model.MangaTag
@@ -87,6 +89,32 @@ internal class MadaraScans(context: MangaLoaderContext) :
 		)
 	}
 
+	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		val docs = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+		val scriptJson = docs.select("script").firstNotNullOfOrNull { script ->
+			READER_PAYLOAD_REGEX.find(script.data())?.groupValues?.getOrNull(1)
+		}
+
+		if (scriptJson == null) {
+			return super.getPages(chapter)
+		}
+
+		val images = JSONObject(scriptJson)
+			.getJSONArray("sources")
+			.getJSONObject(0)
+			.getJSONArray("images")
+
+		return List(images.length()) { index ->
+			val url = images.getString(index)
+			MangaPage(
+				id = generateUid(url),
+				url = url,
+				preview = null,
+				source = source,
+			)
+		}
+	}
+
 	private fun parseChapter(element: Element, dateFormat: SimpleDateFormat): MangaChapter? {
 		val link = element.selectFirst("a") ?: return null
 		val relativeUrl = link.attrAsRelativeUrl("href")
@@ -119,5 +147,6 @@ internal class MadaraScans(context: MangaLoaderContext) :
 
 	private companion object {
 		private val CHAPTER_NUMBER_REGEX = Regex("""(\d+(?:\.\d+)?)""")
+		private val READER_PAYLOAD_REGEX = Regex("""ts_reader\.run\((\{.*?\})\)""", RegexOption.DOT_MATCHES_ALL)
 	}
 }

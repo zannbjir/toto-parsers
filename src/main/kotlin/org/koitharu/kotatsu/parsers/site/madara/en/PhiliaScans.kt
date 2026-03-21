@@ -1,5 +1,7 @@
 package org.koitharu.kotatsu.parsers.site.madara.en
 
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
@@ -22,6 +24,7 @@ import org.koitharu.kotatsu.parsers.util.generateUid
 import org.koitharu.kotatsu.parsers.util.mapNotNullToSet
 import org.koitharu.kotatsu.parsers.util.nullIfEmpty
 import org.koitharu.kotatsu.parsers.util.parseHtml
+import org.koitharu.kotatsu.parsers.util.parseRaw
 import org.koitharu.kotatsu.parsers.util.textOrNull
 import org.koitharu.kotatsu.parsers.util.toAbsoluteUrl
 import org.koitharu.kotatsu.parsers.util.urlEncoded
@@ -31,6 +34,8 @@ import java.util.EnumSet
 @MangaSourceParser("PHILIASCANS", "Philia Scans", "en")
 internal class PhiliaScans(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.PHILIASCANS, "philiascans.org") {
+
+	private var liveSearchNonce: String? = null
 
 	override val listUrl = "series"
 
@@ -50,27 +55,26 @@ internal class PhiliaScans(context: MangaLoaderContext) :
 	override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions()
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+		if (!filter.query.isNullOrEmpty()) {
+			return if (page == 1) {
+				searchByAjax(filter.query)
+			} else {
+				emptyList()
+			}
+		}
+
 		val url = buildString {
 			append("https://")
 			append(domain)
 
-			when {
-				!filter.query.isNullOrEmpty() -> {
-					append("/?post_type=wp-manga&s=")
-					append(filter.query.urlEncoded())
-					append("&paged=")
-					append(page)
-				}
-
-				order == SortOrder.UPDATED && filter.query.isNullOrEmpty() -> {
+			when (order) {
+				SortOrder.UPDATED -> {
 					append("/recently-updated/?page=")
 					append(page)
 				}
 
 				else -> {
-					append("/?post_type=wp-manga&s=")
-					append(filter.query?.urlEncoded().orEmpty())
-					append("&paged=")
+					append("/?post_type=wp-manga&s=&paged=")
 					append(page)
 					when (order) {
 						SortOrder.POPULARITY -> append("&sort=most_viewed")
@@ -81,12 +85,7 @@ internal class PhiliaScans(context: MangaLoaderContext) :
 				}
 			}
 		}
-		val doc = webClient.httpGet(url).parseHtml()
-		return if (!filter.query.isNullOrEmpty()) {
-			parseSearchPage(doc)
-		} else {
-			parseMangaList(doc)
-		}
+		return parseMangaList(webClient.httpGet(url).parseHtml())
 	}
 
 	override fun parseMangaList(doc: Document): List<Manga> {
@@ -139,33 +138,55 @@ internal class PhiliaScans(context: MangaLoaderContext) :
 		)
 	}
 
-	private fun parseSearchPage(doc: Document): List<Manga> {
-		return doc.select("a[href*='/series/']").mapNotNull { link ->
-			val href = link.attr("href")
-			if (!href.contains("/series/") || href.endsWith("/series/")) return@mapNotNull null
-			val relativeUrl = link.attrAsRelativeUrl("href")
-			val title = link.attr("title").trim().nullIfEmpty()
-				?: link.textOrNull()?.replace(Regex("""\s+"""), " ")?.trim()?.nullIfEmpty()
-				?: link.selectFirst("img")?.attr("alt")?.trim()?.nullIfEmpty()
-				?: return@mapNotNull null
-			val cover = link.selectFirst("img:not(.flag-icon)")?.let(::imageUrlFromElement)
-				?: link.parent()?.selectFirst("img:not(.flag-icon)")?.let(::imageUrlFromElement)
+	private suspend fun searchByAjax(query: String): List<Manga> {
+		val response = webClient.httpPost(
+			url = "https://$domain/wp-admin/admin-ajax.php",
+			form = mapOf(
+				"action" to "live_search",
+				"security" to getLiveSearchNonce(),
+				"search_query" to query,
+			),
+		).parseRaw()
+		val results = JSONObject(response).optJSONArray("results") ?: return emptyList()
+		return buildList(results.length()) {
+			for (i in 0 until results.length()) {
+				val html = results.optString(i).nullIfEmpty() ?: continue
+				val card = Jsoup.parseBodyFragment(html, "https://$domain").body().selectFirst("a.search-result-card")
+					?: continue
+				parseSearchCard(card)?.let(::add)
+			}
+		}
+	}
 
-			Manga(
-				id = generateUid(relativeUrl),
-				url = relativeUrl,
-				publicUrl = link.attrAsAbsoluteUrl("href"),
-				coverUrl = normalizeCoverUrl(cover),
-				title = title,
-				altTitles = emptySet(),
-				rating = RATING_UNKNOWN,
-				tags = emptySet(),
-				authors = emptySet(),
-				state = null,
-				source = source,
-				contentRating = null,
-			)
-		}.distinctBy { it.url }
+	private suspend fun getLiveSearchNonce(): String {
+		liveSearchNonce?.let { return it }
+		val html = webClient.httpGet("https://$domain/").parseRaw()
+		val nonce = LIVE_SEARCH_NONCE_REGEX.find(html)?.groupValues?.getOrNull(1)?.nullIfEmpty()
+			?: error("Missing live search nonce")
+		liveSearchNonce = nonce
+		return nonce
+	}
+
+	private fun parseSearchCard(card: Element): Manga? {
+		val relativeUrl = card.attrAsRelativeUrl("href")
+		val title = card.selectFirst(".search-result-title")?.textOrNull()?.trim()?.nullIfEmpty()
+			?: card.selectFirst("img")?.attr("alt")?.trim()?.nullIfEmpty()
+			?: return null
+		val cover = card.selectFirst("img:not(.flag-icon)")?.let(::imageUrlFromElement)
+		return Manga(
+			id = generateUid(relativeUrl),
+			url = relativeUrl,
+			publicUrl = card.attrAsAbsoluteUrl("href"),
+			coverUrl = normalizeCoverUrl(cover),
+			title = title,
+			altTitles = emptySet(),
+			rating = RATING_UNKNOWN,
+			tags = emptySet(),
+			authors = emptySet(),
+			state = null,
+			source = source,
+			contentRating = null,
+		)
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
@@ -246,5 +267,6 @@ internal class PhiliaScans(context: MangaLoaderContext) :
 
 	private companion object {
 		private val CHAPTER_NUMBER_REGEX = Regex("""(\d+(?:\.\d+)?)""")
+		private val LIVE_SEARCH_NONCE_REGEX = Regex("""var\s+liveSearchData\s*=\s*\{"ajaxurl":"[^"]+","nonce":"([^"]+)""")
 	}
 }
