@@ -462,13 +462,13 @@ internal abstract class UzayMangaParser(
 		val response = runCatching { webClient.httpGet(url, extraHeaders = siteHeaders()) }.getOrNull() ?: return null
 		return response.use { res ->
 			val doc = runCatching { res.parseHtml() }.getOrNull() ?: return HttpDocumentResult.Failed
+			if (hasValidUzayContent(doc)) {
+				return HttpDocumentResult.Success(doc)
+			}
 			if (isShieldVerificationPage(doc)) {
 				return HttpDocumentResult.SecondaryVerification
 			}
-			if (isCloudflareChallengePage(doc)) {
-				return HttpDocumentResult.CloudflareChallenge
-			}
-			HttpDocumentResult.Success(doc)
+			HttpDocumentResult.CloudflareChallenge
 		}
 	}
 
@@ -485,11 +485,8 @@ internal abstract class UzayMangaParser(
 		if (isShieldVerificationPage(doc)) {
 			return null
 		}
-		if (isCloudflareChallengePage(doc)) {
-			context.requestBrowserAction(this, url)
-			return null
-		}
-		return doc
+		context.requestBrowserAction(this, url)
+		return null
 	}
 
 	private suspend fun fetchApiRaw(url: String): String {

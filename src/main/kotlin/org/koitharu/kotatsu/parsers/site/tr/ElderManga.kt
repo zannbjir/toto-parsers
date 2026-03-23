@@ -221,13 +221,13 @@ internal class ElderManga(context: MangaLoaderContext):
         val response = runCatching { webClient.httpGet(url) }.getOrNull() ?: return null
         return response.use { res ->
             val doc = runCatching { res.parseHtml() }.getOrNull() ?: return HttpDocumentResult.Failed
+            if (hasValidElderContent(doc)) {
+                return HttpDocumentResult.Success(doc)
+            }
             if (isShieldVerificationPage(doc)) {
                 return HttpDocumentResult.SecondaryVerification
             }
-            if (isCloudflareChallengePage(doc)) {
-                return HttpDocumentResult.CloudflareChallenge
-            }
-            HttpDocumentResult.Success(doc)
+            HttpDocumentResult.CloudflareChallenge
         }
     }
 
@@ -244,11 +244,8 @@ internal class ElderManga(context: MangaLoaderContext):
         if (isShieldVerificationPage(doc)) {
             return null
         }
-        if (isCloudflareChallengePage(doc)) {
-            context.requestBrowserAction(this, url)
-            return null
-        }
-        return doc
+        context.requestBrowserAction(this, url)
+        return null
     }
 
     private fun decodeWebViewHtml(raw: String): String {
