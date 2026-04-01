@@ -13,40 +13,36 @@ import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 
 @MangaSourceParser("MANHWALAND", "ManhwaLand.vip", "id", ContentType.HENTAI)
 internal class ManhwaLand(context: MangaLoaderContext) :
-	MangaReaderParser(context, MangaParserSource.MANHWALAND, "www.manhwaland.baby", pageSize = 20, searchPageSize = 10) {
-	
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = super.filterCapabilities.copy(
-			isTagsExclusionSupported = false,
-		)
-		
-	override val datePattern = "MMM d, yyyy"
+    MangaReaderParser(context, MangaParserSource.MANHWALAND, "www.manhwaland.baby", pageSize = 20, searchPageSize = 10) {
 
-	// 🔥 FIX 1: Paksa semua link gambar jadi HTTPS
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val pages = super.getPages(chapter)
-		return pages.map { page ->
-			page.copy(url = page.url.replace("http://", "https://"))
-		}
-	}
+    override val filterCapabilities: MangaListFilterCapabilities
+        get() = super.filterCapabilities.copy(isTagsExclusionSupported = false)
 
-	// 🔥 FIX 2: Interceptor "Preman" - Nyuntik Referer & UA ke semua request ManhwaLand
-	override fun intercept(chain: Interceptor.Chain): Response {
-		val request = chain.request()
-		val host = request.url.host
-		
-		// Cek kalau request lari ke domain manhwaland (baby atau email)
-		if (host.contains("manhwaland")) {
-			val newRequest = request.newBuilder()
-				.removeHeader("Referer") // Hapus referer lama biar gak bentrok
-				.addHeader("Referer", "https://www.manhwaland.baby/")
-				// Pakai User-Agent Chrome PC biar gak dicurigai bot mobile
-				.removeHeader("User-Agent")
-				.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-				.build()
-			return chain.proceed(newRequest)
-		}
-		
-		return chain.proceed(request)
-	}
+    override val datePattern = "MMM d, yyyy"
+
+    // Fix gambar http → https
+    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+        val pages = super.getPages(chapter)
+        return pages.map { page ->
+            val fixedUrl = page.url.replace("http://", "https://")
+            page.copy(url = fixedUrl)
+        }
     }
+
+    // Interceptor lebih kuat
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val url = request.url.toString()
+
+        if (url.contains("manhwaland")) {
+            val newRequest = request.newBuilder()
+                .addHeader("Referer", "https://www.manhwaland.baby/")
+                .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+                .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                .addHeader("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
+                .build()
+            return chain.proceed(newRequest)
+        }
+        return chain.proceed(request)
+    }
+}
