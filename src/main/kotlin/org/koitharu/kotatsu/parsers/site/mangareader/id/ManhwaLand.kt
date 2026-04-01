@@ -5,7 +5,9 @@ import okhttp3.Response
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.ContentType
+import org.koitharu.kotatsu.parsers.model.MangaChapter
 import org.koitharu.kotatsu.parsers.model.MangaListFilterCapabilities
+import org.koitharu.kotatsu.parsers.model.MangaPage
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
 import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 
@@ -18,6 +20,7 @@ internal class ManhwaLand(context: MangaLoaderContext) :
 
     override val datePattern = "MMM d, yyyy"
 
+    // Fix gambar http → https
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val pages = super.getPages(chapter)
         return pages.map { page ->
@@ -25,7 +28,8 @@ internal class ManhwaLand(context: MangaLoaderContext) :
             page.copy(url = fixed)
         }
     }
-        
+
+    // Interceptor Cloudflare
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
