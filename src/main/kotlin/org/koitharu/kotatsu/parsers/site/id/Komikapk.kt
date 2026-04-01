@@ -252,12 +252,6 @@ internal class Komikapk(context: MangaLoaderContext) :
         val regex = Regex("""(?:chapter|ch\.?|bab)\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
         return regex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
     }
-    
-    private fun parseChapterNumber(name: String): Float {
-        val regex = Regex("""(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
-        val match = regex.find(name)
-        return match?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
-    }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
