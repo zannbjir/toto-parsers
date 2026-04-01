@@ -183,62 +183,58 @@ internal class Komikapk(context: MangaLoaderContext) :
         }.distinctBy { it.id }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+        override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.publicUrl).parseHtml()
 
+        // Title & Cover
         val title = doc.selectFirst("h1.font-label")?.text()?.trim() ?: manga.title
         val cover = doc.selectFirst("img.h-\\[200px\\]")?.src() ?: manga.coverUrl
         val description = doc.selectFirst("div.font-display.mt-5.text-center")?.text()?.trim()
 
-        // Tags / Genres
+        // Tags
         val tags = doc.select("a[href^='/pustaka/semua/'][href*='/terbaru/']").mapNotNull { a ->
             val tagSlug = a.attr("href").split("/").getOrNull(3) ?: return@mapNotNull null
-            MangaTag(
-                title = a.text().trim(),
-                key = tagSlug,
-                source = source,
-            )
+            MangaTag(title = a.text().trim(), key = tagSlug, source = source)
         }.toSet()
 
         // State
-        val state = when {
-            doc.html().contains("completed", ignoreCase = true) ||
-            doc.html().contains("tamat", ignoreCase = true) -> MangaState.FINISHED
-            else -> MangaState.ONGOING
-        }
+        val state = if (doc.html().contains("completed", ignoreCase = true) ||
+                       doc.html().contains("tamat", ignoreCase = true)) 
+            MangaState.FINISHED else MangaState.ONGOING
 
-        // Content Rating (Adult detection lebih kuat)
-        val adultKeywords = listOf(
-            "adult", "mature", "smut", "ecchi", "hentai", "18+", "nakadashi", "rape", "incest",
-            "milf", "loli", "shota", "futanari", "gangbang", "creampie", "netorare", "ntr"
-        )
-        val contentRating = if (tags.any { tag ->
-                adultKeywords.any { keyword -> tag.title.lowercase().contains(keyword) }
-            }) {
-            ContentRating.ADULT
-        } else {
-            null
-        }
+        // Adult detection (lebih kuat)
+        val adultKeywords = listOf("adult", "mature", "smut", "ecchi", "hentai", "18+", "nakadashi", "rape", "incest", "milf", "loli", "shota", "futanari", "gangbang", "creampie", "ntr")
+        val contentRating = if (tags.any { tag -> adultKeywords.any { it in tag.title.lowercase() } }) 
+            ContentRating.ADULT else null
 
-        // Chapters
-        val chapters = doc.select("a[href^='/komik/'][href*='/kmapk/']").mapNotNull { a ->
-            val chapterUrl = a.attr("href")
-            val chapterSlug = chapterUrl.split("/").lastOrNull() ?: return@mapNotNull null
-            val chapterTitle = a.text().trim()
-            val number = chapterSlug.toFloatOrNull() ?: parseChapterNumber(chapterTitle)
+        // === FIX UTAMA: Chapter parsing (support adult) ===
+        val chapters = doc.select("a[href*='/komik/']").mapNotNull { a ->
+            val href = a.attr("href").trim()
+            val text = a.text().trim()
 
-            MangaChapter(
-                id = generateUid(chapterUrl),
-                title = chapterTitle,
-                url = chapterUrl,
-                number = number,
-                volume = 0,
-                scanlator = null,
-                uploadDate = 0L,
-                branch = null,
-                source = source,
-            )
-        }.distinctBy { it.url }.sortedByDescending { it.number }
+            // Hanya ambil yang keliatan chapter
+            if (text.contains("Chapter", ignoreCase = true) ||
+                text.contains("Bab", ignoreCase = true) ||
+                text.matches(Regex(".*\\d+.*"))) {
+
+                val number = parseChapterNumber(text) 
+                    ?: href.split("/").lastOrNull()?.toFloatOrNull() 
+                    ?: 0f
+
+                MangaChapter(
+                    id = generateUid(href),
+                    title = text.ifBlank { "Chapter $number" },
+                    url = href,
+                    number = number,
+                    volume = 0,
+                    scanlator = null,
+                    uploadDate = 0L,
+                    branch = null,
+                    source = source,
+                )
+            } else null
+        }.distinctBy { it.url }
+         .sortedByDescending { it.number }
 
         return manga.copy(
             title = title,
@@ -252,6 +248,11 @@ internal class Komikapk(context: MangaLoaderContext) :
         )
     }
 
+    private fun parseChapterNumber(name: String): Float? {
+        val regex = Regex("""(?:chapter|ch\.?|bab)\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+        return regex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
+    }
+    
     private fun parseChapterNumber(name: String): Float {
         val regex = Regex("""(?:chapter|ch\.?)\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
         val match = regex.find(name)
