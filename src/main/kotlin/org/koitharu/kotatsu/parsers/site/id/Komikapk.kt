@@ -201,15 +201,16 @@ internal class Komikapk(context: MangaLoaderContext) :
             val href = a.attr("href").trim()
             val title = a.text().trim()
 
-            if (title.isBlank() || !title.contains(Regex("""\d"""))) return@mapNotNull null
+            if (title.isBlank()) return@mapNotNull null
 
+            // Pakai fungsi dari parent class
             val number = super.parseChapterNumber(title)
                 ?: href.split("/").lastOrNull()?.toFloatOrNull()
                 ?: 0f
 
             MangaChapter(
                 id = generateUid(href),
-                title = title.ifBlank { "Chapter $number" },
+                title = if (title.isNotBlank()) title else "Chapter $number",
                 url = href,
                 number = number,
                 volume = 0,
