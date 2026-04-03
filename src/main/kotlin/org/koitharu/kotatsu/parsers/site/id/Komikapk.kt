@@ -199,7 +199,8 @@ internal class Komikapk(context: MangaLoaderContext) :
 
             if (titleText.isBlank()) return@mapNotNull null
 
-            val number = super.parseChapterNumber(titleText)
+            // Pakai fungsi lokal (bukan super)
+            val number = parseChapterNumber(titleText)
                 ?: href.split("/").lastOrNull()?.toFloatOrNull()
                 ?: 0f
 
