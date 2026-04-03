@@ -51,7 +51,6 @@ internal class Manhwaku(context: MangaLoaderContext) :
 
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
 
-        // Ambil buildId
         val buildIdMatch = Regex(""""buildId":"([^"]+)"""").find(doc.html())
         val buildId = buildIdMatch?.groupValues?.get(1)
 
@@ -95,7 +94,7 @@ internal class Manhwaku(context: MangaLoaderContext) :
             } catch (_: Exception) {}
         }
 
-        // Fallback HTML scraping
+        // Fallback HTML
         val mangaList = mutableListOf<Manga>()
         doc.select("a[href^='/detail/']").forEach { el ->
             val href = el.attr("href")
