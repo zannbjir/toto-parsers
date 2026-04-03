@@ -69,11 +69,12 @@ internal class Manhwaku(context: MangaLoaderContext) :
                     ?: return emptyList()
 
                 return dataArray.mapNotNull { jo ->
-                    val slug = (jo.opt("slug")?.toString() ?: jo.opt("id")?.toString()) ?: return@mapNotNull null
+                    // PERBAIKAN: Gunakan optString
+                    val slug = jo.optString("slug", "").ifEmpty { jo.optString("id", "") }
                     if (slug.isEmpty()) return@mapNotNull null
 
-                    val title = jo.opt("title")?.toString() ?: "Untitled"
-                    var cover = jo.opt("cover")?.toString() ?: jo.opt("image")?.toString() ?: ""
+                    val title = jo.optString("title", "Untitled")
+                    var cover = jo.optString("cover", "").ifEmpty { jo.optString("image", "") }
                     if (cover.startsWith("/")) cover = "https://$domain$cover"
 
                     Manga(
@@ -151,16 +152,19 @@ internal class Manhwaku(context: MangaLoaderContext) :
                 val detailData = pageProps?.optJSONObject("data") ?: pageProps?.optJSONObject("manhwa")
 
                 if (detailData != null) {
-                    description = detailData.opt("description")?.toString() ?: detailData.opt("synopsis")?.toString() ?: ""
-                    val status = detailData.opt("status")?.toString() ?: ""
+                    // PERBAIKAN: Gunakan optString
+                    description = detailData.optString("description", "").ifEmpty { detailData.optString("synopsis", "") }
+                    val status = detailData.optString("status", "")
                     state = if (status.equals("ongoing", ignoreCase = true)) MangaState.ONGOING else MangaState.FINISHED
 
                     val chaptersArray = detailData.optJSONArray("chapters") ?: JSONArray()
                     for (i in 0 until chaptersArray.length()) {
                         val ch = chaptersArray.getJSONObject(i)
-                        val chSlug = ch.opt("slug")?.toString() ?: ""
-                        val chTitle = ch.opt("title")?.toString() ?: ch.opt("name")?.toString() ?: ""
-                        val numberStr = ch.opt("number")?.toString() ?: ch.opt("chapter")?.toString() ?: "0"
+                        
+                        // PERBAIKAN: Gunakan optString
+                        val chSlug = ch.optString("slug", "")
+                        val chTitle = ch.optString("title", "").ifEmpty { ch.optString("name", "") }
+                        val numberStr = ch.optString("number", "").ifEmpty { ch.optString("chapter", "0") }
                         val number = numberStr.toFloatOrNull() ?: 0f
 
                         if (chSlug.isNotEmpty()) {
