@@ -254,3 +254,4 @@ internal class Komikapk(context: MangaLoaderContext) :
             
         return pages
     }
+}
