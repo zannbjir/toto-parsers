@@ -192,14 +192,13 @@ internal class Komikapk(context: MangaLoaderContext) :
         val contentRating = if (tags.any { tag -> adultKeywords.any { it in tag.title.lowercase() } })
             ContentRating.ADULT else null
 
-        // Chapter parsing (clean)
+        // --- Bagian Chapter Parsing ---
         val chapters = doc.select("a[href^='/komik/']").mapNotNull { a ->
             val href = a.attr("href").trim()
             val titleText = a.text().trim()
 
             if (titleText.isBlank()) return@mapNotNull null
 
-            // Pakai fungsi lokal (bukan super)
             val number = parseChapterNumber(titleText)
                 ?: href.split("/").lastOrNull()?.toFloatOrNull()
                 ?: 0f
@@ -215,8 +214,7 @@ internal class Komikapk(context: MangaLoaderContext) :
                 branch = null,
                 source = source,
             )
-        }.distinctBy { it.url }
-         .sortedByDescending { it.number }
+        }
 
         return manga.copy(
             title = title,
@@ -226,7 +224,7 @@ internal class Komikapk(context: MangaLoaderContext) :
             tags = tags,
             state = state,
             contentRating = contentRating,
-            chapters = chapters,
+            chapters = chapters.distinctBy { it.url }.sortedBy { it.number }
         )
     }
 
@@ -235,15 +233,17 @@ internal class Komikapk(context: MangaLoaderContext) :
         return regex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
     }
                 
+    // --- Bagian Get Pages ---
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
-
-        return doc.select("section img[src*='.jpg'], section img[src*='.png'], section img[src*='.webp']")
+        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
+        val pages = doc.select("section img[src*='.jpg'], section img[src*='.png'], section img[src*='.webp']")
             .mapNotNull { img ->
-                val imageUrl = img.src() ?: return@mapNotNull null
+                val imageUrl = img.attr("data-src").ifEmpty { img.src() } ?: return@mapNotNull null
+                
                 if (imageUrl.isBlank() || !imageUrl.contains("cdn-guard")) {
                     return@mapNotNull null
                 }
+                
                 MangaPage(
                     id = generateUid(imageUrl),
                     url = imageUrl,
@@ -251,5 +251,6 @@ internal class Komikapk(context: MangaLoaderContext) :
                     source = source,
                 )
             }.distinctBy { it.id }
+            
+        return pages
     }
-}
