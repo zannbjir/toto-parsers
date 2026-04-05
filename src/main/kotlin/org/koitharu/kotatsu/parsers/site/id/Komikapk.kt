@@ -172,12 +172,11 @@ internal class Komikapk(context: MangaLoaderContext) :
         }.distinctBy { it.id }
     }
 
-                override suspend fun getDetails(manga: Manga): Manga {
-        val doc = webClient.httpGet(manga.publicUrl).parseHtml()
-
+       override suspend fun getDetails(manga: Manga): Manga {
+        val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         val title = doc.selectFirst("h1.font-label")?.text()?.trim() ?: manga.title
         val cover = doc.selectFirst("img.h-\\[200px\\]")?.src() ?: manga.coverUrl
-        val description = doc.selectFirst("div.font-display.mt-5.text-center")?.text()?.trim()
+        val description = doc.selectFirst("div.font-display.mt-5.text-center")?.text()?.trim() ?: ""
 
         val tags = doc.select("a[href^='/pustaka/semua/'][href*='/terbaru/']").mapNotNull { a ->
             val tagSlug = a.attr("href").split("/").getOrNull(3) ?: return@mapNotNull null
@@ -190,17 +189,18 @@ internal class Komikapk(context: MangaLoaderContext) :
 
         val adultKeywords = listOf("adult", "mature", "smut", "ecchi", "hentai", "18+", "nakadashi", "rape", "incest", "milf", "loli", "shota", "futanari", "gangbang", "creampie", "ntr")
         val contentRating = if (tags.any { tag -> adultKeywords.any { it in tag.title.lowercase() } })
-            ContentRating.ADULT else null
+            ContentRating.ADULT else ContentRating.SAFE 
 
-        // --- Bagian Chapter Parsing ---
         val chapters = doc.select("a[href^='/komik/']").mapNotNull { a ->
             val href = a.attr("href").trim()
-            val titleText = a.text().trim()
+            val segments = href.split("/").filter { it.isNotBlank() }
+            if (segments.size < 4) return@mapNotNull null // Skip! Ini pasti link Uploader/Author
 
+            val titleText = a.text().trim()
             if (titleText.isBlank()) return@mapNotNull null
 
             val number = parseChapterNumber(titleText)
-                ?: href.split("/").lastOrNull()?.toFloatOrNull()
+                ?: segments.lastOrNull()?.toFloatOrNull()
                 ?: 0f
 
             MangaChapter(
@@ -233,25 +233,32 @@ internal class Komikapk(context: MangaLoaderContext) :
         return regex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
     }
                 
-    // --- Bagian Get Pages ---
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
-        val pages = doc.select("section img[src*='.jpg'], section img[src*='.png'], section img[src*='.webp']")
-            .mapNotNull { img ->
-                val imageUrl = img.attr("data-src").ifEmpty { img.src() } ?: return@mapNotNull null
-                
-                if (imageUrl.isBlank() || !imageUrl.contains("cdn-guard")) {
-                    return@mapNotNull null
-                }
-                
-                MangaPage(
-                    id = generateUid(imageUrl),
-                    url = imageUrl,
-                    preview = null,
-                    source = source,
-                )
-            }.distinctBy { it.id }
+        val htmlString = doc.html()
+        val pages = mutableListOf<MangaPage>()
+
+        val jsonMatch = Regex("""images:\[(.*?)\]""").find(htmlString)
+        if (jsonMatch != null) {
+            val urlsString = jsonMatch.groupValues[1]
+            val urls = urlsString.split(",").map { it.replace("\"", "").trim() }
             
-        return pages
+            urls.forEach { url ->
+                if (url.isNotBlank() && url.contains("cdn-guard")) {
+                    pages.add(MangaPage(generateUid(url), url, null, source))
+                }
+            }
+        }
+
+        if (pages.isEmpty()) {
+            doc.select("section img").forEach { img ->
+                val imageUrl = img.attr("data-src").ifEmpty { img.attr("src") }
+                if (imageUrl.isNotBlank() && imageUrl.contains("cdn-guard")) {
+                    pages.add(MangaPage(generateUid(imageUrl), imageUrl, null, source))
+                }
+            }
+        }
+
+        return pages.distinctBy { it.url }
     }
 }
