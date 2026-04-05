@@ -1,6 +1,5 @@
 package org.koitharu.kotatsu.parsers.site.mangareader.id
 
-import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
@@ -13,57 +12,45 @@ import org.koitharu.kotatsu.parsers.model.MangaParserSource
 import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 
 @MangaSourceParser("MANHWALAND", "ManhwaLand.vip", "id", ContentType.HENTAI)
-internal class ManhwaLand(context: MangaLoaderContext) :
-    MangaReaderParser(context, MangaParserSource.MANHWALAND, "www.manhwaland.baby", pageSize = 20, searchPageSize = 10) {
+internal class ManhwaLand(
+    context: MangaLoaderContext
+) : MangaReaderParser(
+    context,
+    MangaParserSource.MANHWALAND,
+    "www.manhwaland.baby",
+    pageSize = 20,
+    searchPageSize = 10
+) {
 
     override val filterCapabilities: MangaListFilterCapabilities
-        get() = super.filterCapabilities.copy(isTagsExclusionSupported = false)
+        get() = super.filterCapabilities.copy(
+            isTagsExclusionSupported = false
+        )
 
     override val datePattern = "MMM d, yyyy"
 
-    // Fix 1: Paksa semua gambar jadi HTTPS + tambah query param kalau perlu
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val pages = super.getPages(chapter)
-
-        return pages.map { page ->
-            var fixedUrl = page.url.replace("http://", "https://")
-
-            // Kalau masih dari subdomain image, paksa referer lewat interceptor
-            if (fixedUrl.contains("manhwaland.email") || fixedUrl.contains("manhwaland")) {
-                fixedUrl = fixedUrl.substringBefore("?")  // bersihkan parameter lama
-            }
-
-            page.copy(url = fixedUrl)
+        return super.getPages(chapter).map { page ->
+            page.copy(
+                url = page.url.replace("http://", "https://")
+            )
         }
     }
 
-    // Fix 2: Interceptor SUPER EKSTREM (ini yang paling penting buat 403 gambar)
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
 
-        if (url.contains("manhwaland")) {
-            val newBuilder = request.newBuilder()
+        if (url.contains("manhwaland.email")) {
+            val newRequest = request.newBuilder()
+                .header("Referer", "https://www.manhwaland.baby/")
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
+                )
+                .header("Accept", "image/webp,image/*,*/*;q=0.8")
+                .build()
 
-            // Referer paling kuat (harus dari domain utama)
-            newBuilder.addHeader("Referer", "https://www.manhwaland.baby/")
-
-            // User-Agent desktop + mobile mix (kadang beda subdomain butuh yang beda)
-            newBuilder.addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-
-            // Header tambahan biar keliatan seperti browser asli
-            newBuilder.addHeader("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            newBuilder.addHeader("Accept-Language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7")
-            newBuilder.addHeader("Sec-Fetch-Dest", "image")
-            newBuilder.addHeader("Sec-Fetch-Mode", "no-cors")
-            newBuilder.addHeader("Sec-Fetch-Site", "cross-site")
-
-            // Origin juga penting buat beberapa protection
-            if (url.contains("manhwaland.email")) {
-                newBuilder.addHeader("Origin", "https://www.manhwaland.baby")
-            }
-
-            val newRequest = newBuilder.build()
             return chain.proceed(newRequest)
         }
 
