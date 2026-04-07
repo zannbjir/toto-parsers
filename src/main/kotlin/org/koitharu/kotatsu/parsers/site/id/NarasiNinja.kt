@@ -143,7 +143,7 @@ internal class NarasiNinjaParser(context: MangaLoaderContext) :
 		// Extract metadata from the info table
 		val infoTable = doc.selectFirst("table.infotable")
 
-		val state = infoTable?.select("td:contains(Status)")?.let { statusTd ->
+		val state = infoTable?.selectFirst("td:contains(Status)")?.let { statusTd ->
 			val value = statusTd.nextElementSibling()?.text()?.trim()?.lowercase()
 			when (value) {
 				"ongoing", "berlangsung" -> MangaState.ONGOING
@@ -152,7 +152,7 @@ internal class NarasiNinjaParser(context: MangaLoaderContext) :
 			}
 		}
 
-		val author = infoTable?.select("td:contains(Author)")?.let { authorTd ->
+		val author = infoTable?.selectFirst("td:contains(Author)")?.let { authorTd ->
 			authorTd.nextElementSibling()?.text()?.trim()
 		}
 
