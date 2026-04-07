@@ -47,9 +47,10 @@ internal class Softkomik(context: MangaLoaderContext) :
             if (!res.isNullOrEmpty()) {
                 val json = JSONObject(res)
                 session = SessionDto(
-                    ex = json.optLong("ex"),
-                    token = json.opt("token")?.toString() ?: "",
-                    sign = json.opt("sign")?.toString() ?: ""
+                    ex = json.optLong("ex", 0L),
+                    // PERBAIKAN: Gunakan optString
+                    token = json.optString("token", ""),
+                    sign = json.optString("sign", "")
                 )
             }
         } catch (_: Exception) {}
@@ -78,29 +79,39 @@ internal class Softkomik(context: MangaLoaderContext) :
             ?: pageProps.optJSONArray("terbaru")
             ?: return emptyList()
 
-        return mangaArray.mapNotNull { jo ->
-            val slug = jo.opt("title_slug")?.toString() ?: jo.opt("id")?.toString() ?: return@mapNotNull null
-            if (slug.isEmpty()) return@mapNotNull null
+        val result = mutableListOf<Manga>()
+        
+        // PERBAIKAN: Gunakan For loop standar dan optString
+        for (i in 0 until mangaArray.length()) {
+            val jo = mangaArray.optJSONObject(i) ?: continue
+            val slug = jo.optString("title_slug", "").ifEmpty { jo.optString("id", "") }
+            if (slug.isEmpty()) continue
 
-            val title = jo.opt("title")?.toString() ?: "Untitled"
-            var cover = jo.opt("gambar")?.toString() ?: ""
+            val title = jo.optString("title", "Untitled")
+            var cover = jo.optString("gambar", "")
             if (cover.startsWith("/")) cover = "$coverCdn/$cover"
+            
+            val status = jo.optString("status", "")
+            val state = if (status.contains("ongoing", ignoreCase = true)) MangaState.ONGOING else MangaState.FINISHED
 
-            Manga(
-                id = generateUid(slug),
-                title = title.trim(),
-                altTitles = emptySet(),
-                url = "/komik/$slug",
-                publicUrl = "https://softkomik.co/komik/$slug",
-                rating = RATING_UNKNOWN,
-                contentRating = ContentRating.SAFE,
-                coverUrl = cover,
-                tags = emptySet(),
-                state = if ((jo.opt("status")?.toString() ?: "").contains("ongoing", ignoreCase = true)) MangaState.ONGOING else MangaState.FINISHED,
-                authors = emptySet(),
-                source = source
+            result.add(
+                Manga(
+                    id = generateUid(slug),
+                    title = title.trim(),
+                    altTitles = emptySet(),
+                    url = "/komik/$slug",
+                    publicUrl = "https://softkomik.co/komik/$slug",
+                    rating = RATING_UNKNOWN,
+                    contentRating = ContentRating.SAFE,
+                    coverUrl = cover,
+                    tags = emptySet(),
+                    state = state,
+                    authors = emptySet(),
+                    source = source
+                )
             )
         }
+        return result
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
@@ -118,32 +129,44 @@ internal class Softkomik(context: MangaLoaderContext) :
         val tags = mutableSetOf<MangaTag>()
         detail.optJSONArray("Genre")?.let { arr ->
             for (i in 0 until arr.length()) {
-                val name = arr.opt(i)?.toString()?.trim() ?: ""
+                // PERBAIKAN: Gunakan optString
+                val name = arr.optString(i, "").trim()
                 if (name.isNotEmpty()) tags.add(MangaTag(name, name, source))
             }
         }
 
-        val chapters = chaptersArray.mapNotNull { ch ->
-            val chStr = ch.opt("chapter")?.toString() ?: "0"
+        val chapters = mutableListOf<MangaChapter>()
+        // PERBAIKAN: Gunakan For loop standar
+        for (i in 0 until chaptersArray.length()) {
+            val ch = chaptersArray.optJSONObject(i) ?: continue
+            val chStr = ch.optString("chapter", "0")
             val number = chStr.toFloatOrNull() ?: 0f
-            MangaChapter(
-                id = generateUid("${manga.url}-$chStr"),
-                title = "Chapter $chStr",
-                url = "${manga.url}/chapter/$chStr",
-                number = number,
-                volume = 0,
-                scanlator = null,
-                uploadDate = 0L,
-                branch = null,
-                source = source
+            
+            chapters.add(
+                MangaChapter(
+                    id = generateUid("${manga.url}-$chStr"),
+                    title = "Chapter $chStr",
+                    url = "${manga.url}/chapter/$chStr",
+                    number = number,
+                    volume = 0,
+                    scanlator = null,
+                    uploadDate = 0L,
+                    branch = null,
+                    source = source
+                )
             )
-        }.sortedByDescending { it.number }
+        }
+        chapters.sortByDescending { it.number }
+
+        val status = detail.optString("status", "")
+        val state = if (status.contains("ongoing", ignoreCase = true)) MangaState.ONGOING else MangaState.FINISHED
+        val authorText = detail.optString("author", "")
 
         return manga.copy(
-            description = detail.opt("sinopsis")?.toString() ?: "",
+            description = detail.optString("sinopsis", ""),
             tags = tags,
-            authors = setOfNotNull(detail.opt("author")?.toString()?.takeIf { it.isNotEmpty() }),
-            state = if ((detail.opt("status")?.toString() ?: "").contains("ongoing", ignoreCase = true)) MangaState.ONGOING else MangaState.FINISHED,
+            authors = setOfNotNull(authorText.takeIf { it.isNotEmpty() }),
+            state = state,
             chapters = chapters
         )
     }
@@ -163,7 +186,7 @@ internal class Softkomik(context: MangaLoaderContext) :
         var images = data.optJSONArray("imageSrc") ?: JSONArray()
 
         if (images.length() == 0) {
-            val id = data.opt("_id")?.toString() ?: ""
+            val id = data.optString("_id", "")
             val segments = chapter.url.split("/")
             if (segments.size >= 4) {
                 val slug = segments[2]
@@ -173,8 +196,9 @@ internal class Softkomik(context: MangaLoaderContext) :
                 try {
                     val sessionRes = webClient.httpGet("https://softkomik.co/api/sessions", baseHeaders).body?.string()
                     val sessionJson = JSONObject(sessionRes ?: "{}")
-                    val token = sessionJson.opt("token")?.toString() ?: ""
-                    val sign = sessionJson.opt("sign")?.toString() ?: ""
+                    // PERBAIKAN: Gunakan optString
+                    val token = sessionJson.optString("token", "")
+                    val sign = sessionJson.optString("sign", "")
 
                     val apiHeaders = baseHeaders.newBuilder()
                         .add("X-Token", token)
@@ -192,7 +216,8 @@ internal class Softkomik(context: MangaLoaderContext) :
         val host = if (isInter2) cdnUrls[2] else cdnUrls[0]
 
         return (0 until images.length()).mapNotNull { i ->
-            val path = images.opt(i)?.toString()?.removePrefix("/") ?: ""
+            // PERBAIKAN: Gunakan optString
+            val path = images.optString(i, "").removePrefix("/")
             if (path.isNotEmpty()) MangaPage(generateUid(path), "$host/$path", null, source) else null
         }
     }
