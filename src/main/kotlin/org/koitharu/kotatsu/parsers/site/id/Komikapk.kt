@@ -234,23 +234,33 @@ internal class Komikapk(context: MangaLoaderContext) :
     }
                 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+        // Pastikan getRequestHeaders() ikut dibawa biar gak kena blokir 403
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
         val htmlString = doc.html()
         val pages = mutableListOf<MangaPage>()
-        val jsonMatch = Regex("""images:\[(.*?)\]""").find(htmlString)
-        if (jsonMatch != null) {
-            val urlsString = jsonMatch.groupValues[1]
-            val urls = urlsString.split(",").map { it.replace("\"", "").trim() }
+
+        // 1. Jurus Ultimate SvelteKit (Ambil array images terakhir)
+        // Kadang di SvelteKit ada 'latestChapter' dan 'chapter', kita ambil yg terakhir (chapter saat ini)
+        val regex = Regex("""images:\s*\[(.*?)\]""", RegexOption.IGNORE_CASE)
+        val match = regex.findAll(htmlString).lastOrNull()
+        
+        if (match != null) {
+            val urlsString = match.groupValues[1]
+            val urls = urlsString.split(",")
             
-            urls.forEach { url ->
-                if (url.isNotBlank() && url.startsWith("http")) {
-                    pages.add(MangaPage(generateUid(url), url, null, source))
+            for (u in urls) {
+                // Bersihkan tanda kutip dari URL
+                val cleanUrl = u.replace("\"", "").replace("'", "").trim()
+                if (cleanUrl.startsWith("http")) {
+                    pages.add(MangaPage(generateUid(cleanUrl), cleanUrl, null, source))
                 }
             }
         }
 
+        // 2. Jurus Sapu Bersih Jsoup (Kalau JSON gagal)
+        // Ambil SEMUA tag img yang ada di dalam tag section apapun
         if (pages.isEmpty()) {
-            doc.select("section.mt-5 img").forEach { img ->
+            doc.select("section img").forEach { img ->
                 val imageUrl = img.attr("data-src").ifEmpty { img.attr("src") }
                 
                 if (imageUrl.isNotBlank() && imageUrl.startsWith("http")) {
