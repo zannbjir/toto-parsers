@@ -237,23 +237,23 @@ internal class Komikapk(context: MangaLoaderContext) :
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
         val htmlString = doc.html()
         val pages = mutableListOf<MangaPage>()
-
         val jsonMatch = Regex("""images:\[(.*?)\]""").find(htmlString)
         if (jsonMatch != null) {
             val urlsString = jsonMatch.groupValues[1]
             val urls = urlsString.split(",").map { it.replace("\"", "").trim() }
             
             urls.forEach { url ->
-                if (url.isNotBlank() && url.contains("cdn-guard")) {
+                if (url.isNotBlank() && url.startsWith("http")) {
                     pages.add(MangaPage(generateUid(url), url, null, source))
                 }
             }
         }
 
         if (pages.isEmpty()) {
-            doc.select("section img").forEach { img ->
+            doc.select("section.mt-5 img").forEach { img ->
                 val imageUrl = img.attr("data-src").ifEmpty { img.attr("src") }
-                if (imageUrl.isNotBlank() && imageUrl.contains("cdn-guard")) {
+                
+                if (imageUrl.isNotBlank() && imageUrl.startsWith("http")) {
                     pages.add(MangaPage(generateUid(imageUrl), imageUrl, null, source))
                 }
             }
