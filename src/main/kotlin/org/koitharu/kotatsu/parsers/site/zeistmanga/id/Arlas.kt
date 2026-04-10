@@ -6,5 +6,5 @@ import org.koitharu.kotatsu.parsers.model.MangaParserSource
 import org.koitharu.kotatsu.parsers.site.zeistmanga.ZeistMangaParser
 
 @MangaSourceParser("ARLAS", "Arlas", "id")
-internal class Lepoytl(context: MangaLoaderContext) :
+internal class Arlas(context: MangaLoaderContext) :
 	ZeistMangaParser(context, MangaParserSource.ARLAS, "https://www.arlas.my.id")
