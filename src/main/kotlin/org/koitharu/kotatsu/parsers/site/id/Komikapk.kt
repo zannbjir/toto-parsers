@@ -235,33 +235,52 @@ internal class Komikapk(context: MangaLoaderContext) :
        
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
     val chapterUrl = chapter.url.toAbsoluteUrl(domain)
-    val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
 
-    // Ambil dari JSON di script SvelteKit
-    val scriptContent = doc.select("script").map { it.data() }
-        .firstOrNull { it.contains("\"images\"") && it.contains("chapter") } ?: ""
+    val headers = getRequestHeaders().newBuilder()
+        .add("Referer", chapterUrl)
+        .build()
 
-    // Extract array images dari JSON
-    val imagesJson = Regex(""""images":\s*\[([^\]]+)\]""")
-        .find(scriptContent)?.groupValues?.get(1) ?: ""
+    val doc = webClient.httpGet(chapterUrl, headers).parseHtml()
 
-    val urls = Regex(""""(https?://[^"]+\.webp)"""")
-        .findAll(imagesJson)
-        .map { it.groupValues[1] }
-        .toList()
+    // Coba dari img tag dulu (kalau SSR lengkap)
+    val imgPages = doc.select("section img, img[alt*='image-komik']")
+        .mapNotNull { img ->
+            val url = img.src() ?: img.attr("data-src") ?: return@mapNotNull null
+            if (url.isBlank() || url.contains("loading.gif")) return@mapNotNull null
+            MangaPage(id = generateUid(url), url = url, preview = null, source = source)
+        }.distinctBy { it.id }
 
-    // Fallback ke img selector kalau JSON kosong
-    if (urls.isEmpty()) {
-        return doc.select("img[src*='cdn-guard'], img[src*='chapter'], section img")
-            .mapNotNull { img ->
-                val imageUrl = img.src() ?: img.attr("data-src") ?: return@mapNotNull null
-                if (imageUrl.isBlank()) return@mapNotNull null
-                MangaPage(id = generateUid(imageUrl), url = imageUrl, preview = null, source = source)
-            }.distinctBy { it.id }
+    if (imgPages.isNotEmpty()) return imgPages
+
+    // Fallback: Construct URL dari JSON data di script tag
+    // Parse jumlah gambar dari alt text: "image-komik-xxx-N/TOTAL"
+    val scriptData = doc.select("script").map { it.data() }
+        .firstOrNull { it.contains("images") && it.contains("chapterOrder") } ?: ""
+
+    // Ambil comic slug dan chapter number dari URL
+    // Format: /komik/{comicSlug}/{uploaderSlug}/{chapterName}
+    val segments = chapter.url.split("/").filter { it.isNotBlank() }
+    // segments: [komik, comicSlug, uploaderSlug, chapterName]
+    val comicSlug = segments.getOrNull(1) ?: return emptyList()
+    val chapterName = segments.getOrNull(3) ?: return emptyList()
+
+    // Hitung total gambar dari JSON
+    val totalImages = Regex(""""images":\s*\[([^\]]+)\]""")
+        .find(scriptData)
+        ?.groupValues?.get(1)
+        ?.split(",")
+        ?.size ?: 0
+
+    if (totalImages == 0) return emptyList()
+
+    // Construct URL pakai pola cdn-guard
+    return (0 until totalImages).map { i ->
+        val imageUrl = "https://s1.cdn-guard.com/komikapk2-chapter/$comicSlug/chapter-$chapterName/image-${i.toString().padStart(4, '0')}.webp"
+        MangaPage(
+            id = generateUid(imageUrl),
+            url = imageUrl,
+            preview = null,
+            source = source,
+        )
     }
-
-    return urls.map { url ->
-        MangaPage(id = generateUid(url), url = url, preview = null, source = source)
-    }.distinctBy { it.id }
-  }
 }
