@@ -7,4 +7,4 @@ import org.koitharu.kotatsu.parsers.site.zeistmanga.ZeistMangaParser
 
 @MangaSourceParser("ARLAS", "Arlas", "id")
 internal class Arlas(context: MangaLoaderContext) :
-	ZeistMangaParser(context, MangaParserSource.ARLAS, "https://www.arlas.my.id")
+	ZeistMangaParser(context, MangaParserSource.ARLAS, "www.arlas.my.id")
