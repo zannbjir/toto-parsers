@@ -1,5 +1,6 @@
 package org.koitharu.kotatsu.parsers.site.id
 
+import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
@@ -47,25 +48,22 @@ internal class Softkomik(context: MangaLoaderContext) :
 
     private val sessionCache = ConcurrentHashMap<String, SessionDto>()
 
-    private val rscHeaders
-        get() = """{"rsc":"1","Referer":"https://$domain/","Origin":"https://$domain"}"""
-
     private suspend fun getSession(endpoint: String): SessionDto {
         sessionCache[endpoint]?.takeIf { it.ex > System.currentTimeMillis() }?.let { return it }
 
         // Warm up cookies dulu
-        val siteHeaders = mapOf(
-            "Referer" to "https://$domain/",
-            "Origin" to "https://$domain",
-        )
+        val siteHeaders = Headers.Builder()
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .build()
         runCatching { webClient.httpGet("https://$domain", siteHeaders) }
 
-        val apiHeaders = mapOf(
-            "Accept" to "application/json",
-            "Content-Type" to "application/json",
-            "X-Requested-With" to "XMLHttpRequest",
-            "Referer" to "https://$domain/",
-        )
+        val apiHeaders = Headers.Builder()
+            .add("Accept", "application/json")
+            .add("Content-Type", "application/json")
+            .add("X-Requested-With", "XMLHttpRequest")
+            .add("Referer", "https://$domain/")
+            .build()
         val res = webClient.httpGet("https://$domain$endpoint", apiHeaders).parseJson()
         val session = SessionDto(
             ex = res.optLong("ex", System.currentTimeMillis() + 7_200_000L),
@@ -90,11 +88,11 @@ internal class Softkomik(context: MangaLoaderContext) :
         val sortBy = if (order == SortOrder.POPULARITY) "popular" else "newKomik"
         val url = "https://$domain/komik/library?sortBy=$sortBy&page=$page"
 
-        val headers = mapOf(
-            "rsc" to "1",
-            "Referer" to "https://$domain/",
-            "Origin" to "https://$domain",
-        )
+        val headers = Headers.Builder()
+            .add("rsc", "1")
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .build()
 
         val responseText = webClient.httpGet(url, headers).body?.string() ?: return emptyList()
 
@@ -126,12 +124,12 @@ internal class Softkomik(context: MangaLoaderContext) :
     private suspend fun searchByQuery(query: String, page: Int): List<Manga> {
         val session = getChapterListSession()
         val url = "$apiUrl/komik?name=${query.urlEncoded()}&search=true&limit=20&page=$page"
-        val headers = mapOf(
-            "X-Token" to session.token,
-            "X-Sign" to session.sign,
-            "Accept" to "application/json",
-            "Referer" to "https://$domain/",
-        )
+        val headers = Headers.Builder()
+            .add("X-Token", session.token)
+            .add("X-Sign", session.sign)
+            .add("Accept", "application/json")
+            .add("Referer", "https://$domain/")
+            .build()
         val json = webClient.httpGet(url, headers).parseJson()
         val dataArray = json.optJSONArray("data") ?: return emptyList()
         return dataArray.mapJSON { jo ->
@@ -158,11 +156,11 @@ internal class Softkomik(context: MangaLoaderContext) :
     // ── DETAILS ───────────────────────────────────────────────────────────────
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val rscHdrs = mapOf(
-            "rsc" to "1",
-            "Referer" to "https://$domain/",
-            "Origin" to "https://$domain",
-        )
+        val rscHdrs = Headers.Builder()
+            .add("rsc", "1")
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .build()
         val responseText = webClient.httpGet(manga.publicUrl, rscHdrs).body?.string() ?: return manga
 
         val detail = extractNextJsData(responseText, "title", "sinopsis") ?: return manga
@@ -200,12 +198,12 @@ internal class Softkomik(context: MangaLoaderContext) :
     private suspend fun fetchChapterList(slug: String, mangaUrl: String): List<MangaChapter> {
         val session = getChapterListSession()
         val url = "$apiUrl/komik/$slug/chapter?limit=9999999"
-        val headers = mapOf(
-            "X-Token" to session.token,
-            "X-Sign" to session.sign,
-            "Accept" to "application/json",
-            "Referer" to "https://$domain/",
-        )
+        val headers = Headers.Builder()
+            .add("X-Token", session.token)
+            .add("X-Sign", session.sign)
+            .add("Accept", "application/json")
+            .add("Referer", "https://$domain/")
+            .build()
 
         val json = webClient.httpGet(url, headers).parseJson()
         val chapterArray = json.optJSONArray("chapter") ?: return emptyList()
@@ -237,11 +235,11 @@ internal class Softkomik(context: MangaLoaderContext) :
     // ── PAGES ─────────────────────────────────────────────────────────────────
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val rscHdrs = mapOf(
-            "rsc" to "1",
-            "Referer" to "https://$domain/",
-            "Origin" to "https://$domain",
-        )
+        val rscHdrs = Headers.Builder()
+            .add("rsc", "1")
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .build()
         val responseText = webClient.httpGet(
             "https://$domain${chapter.url}", rscHdrs,
         ).body?.string() ?: return emptyList()
@@ -282,12 +280,12 @@ internal class Softkomik(context: MangaLoaderContext) :
         return try {
             val session = getChapterImageSession()
             val url = "$apiUrl/komik/$slug/chapter/$chapter/img/$id"
-            val headers = mapOf(
-                "X-Token" to session.token,
-                "X-Sign" to session.sign,
-                "Accept" to "application/json",
-                "Referer" to "https://$domain/",
-            )
+            val headers = Headers.Builder()
+                .add("X-Token", session.token)
+                .add("X-Sign", session.sign)
+                .add("Accept", "application/json")
+                .add("Referer", "https://$domain/")
+                .build()
             val json = webClient.httpGet(url, headers).parseJson()
             json.optJSONArray("imageSrc") ?: JSONArray()
         } catch (_: Exception) {
@@ -318,12 +316,7 @@ internal class Softkomik(context: MangaLoaderContext) :
         return if (suffix.isNotEmpty()) "$formatted.$suffix" else formatted
     }
 
-    /**
-     * Extract embedded JSON dari Next.js RSC/SSR response.
-     * Cari object JSON yang mengandung semua key yang diminta.
-     */
     private fun extractNextJsData(text: String, vararg requiredKeys: String): JSONObject? {
-        // Coba dari __NEXT_DATA__ script dulu (SSR standard)
         val nextDataRegex = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
         nextDataRegex.find(text)?.groupValues?.get(1)?.let { raw ->
             runCatching {
