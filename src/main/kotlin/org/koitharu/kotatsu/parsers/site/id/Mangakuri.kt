@@ -1,6 +1,5 @@
 package org.koitharu.kotatsu.parsers.site.id
 
-import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
@@ -129,7 +128,8 @@ internal class Mangakuri(context: MangaLoaderContext) :
 
     override suspend fun getDetails(manga: Manga): Manga {
         val slug = manga.url.removePrefix("/comic/")
-        val json = webClient.httpGet("https://$apiDomain/api/series/$slug").parseJson()
+        // FIX: endpoint yang benar adalah /api/series/comic/{slug}
+        val json = webClient.httpGet("https://$apiDomain/api/series/comic/$slug").parseJson()
 
         val tags = json.optJSONArray("genres")?.mapJSON { jo ->
             MangaTag(
@@ -161,9 +161,12 @@ internal class Mangakuri(context: MangaLoaderContext) :
         val chapters = units.mapJSON { jo ->
             val chapterSlug = jo.getString("slug")
             val number = jo.optString("number").toFloatOrNull() ?: 0f
+            // FIX: pakai field "title" dari API, fallback ke number kalau kosong
+            val chapterTitle = jo.optString("title").takeIf { it.isNotBlank() }
+                ?: jo.optString("number").removeSuffix(".00")
             MangaChapter(
                 id = generateUid(chapterSlug),
-                title = "Chapter ${jo.optString("number").removeSuffix(".00")}",
+                title = "Chapter $chapterTitle",
                 url = "/comic/$slug/chapter/$chapterSlug",
                 number = number,
                 volume = 0,
@@ -192,10 +195,12 @@ internal class Mangakuri(context: MangaLoaderContext) :
         val seriesSlug = parts.getOrNull(1) ?: return emptyList()
         val chapterSlug = parts.getOrNull(3) ?: return emptyList()
 
+        // FIX: endpoint yang benar adalah /api/series/comic/{seriesSlug}/chapter/{chapterSlug}
         val json = webClient.httpGet(
-            "https://$apiDomain/api/series/$seriesSlug/chapter/$chapterSlug"
+            "https://$apiDomain/api/series/comic/$seriesSlug/chapter/$chapterSlug"
         ).parseJson()
 
+        // FIX: pages ada di json["chapter"]["pages"], bukan json["chapter"]["pages"] via optJSONObject
         val pages = json.optJSONObject("chapter")?.optJSONArray("pages") ?: return emptyList()
 
         return pages.mapJSON { jo ->
@@ -211,9 +216,34 @@ internal class Mangakuri(context: MangaLoaderContext) :
 
     private suspend fun fetchTags(): Set<MangaTag> {
         return runCatching {
+            // FIX: response dari /api/genres adalah array langsung, bukan { data: [...] }
             val json = webClient.httpGet("https://$apiDomain/api/genres").parseJson()
-            val data = json.optJSONArray("data") ?: return@runCatching emptySet()
-            data.mapJSON { jo ->
+            // Cek apakah response berupa array langsung atau object dengan field "data"
+            val array = if (json.has("data")) {
+                json.optJSONArray("data")
+            } else {
+                // Response adalah array — tapi parseJson() mengembalikan JSONObject,
+                // jadi kita fetch ulang sebagai raw string dan parse sebagai JSONArray
+                null
+            }
+            if (array != null) {
+                array.mapJSON { jo ->
+                    MangaTag(
+                        key = jo.getString("slug"),
+                        title = jo.getString("name").toTitleCase(),
+                        source = source,
+                    )
+                }.toSet()
+            } else {
+                fetchTagsAsArray()
+            }
+        }.getOrElse { emptySet() }
+    }
+
+    private suspend fun fetchTagsAsArray(): Set<MangaTag> {
+        return runCatching {
+            val response = webClient.httpGet("https://$apiDomain/api/genres").parseJsonArray()
+            response.mapJSON { jo ->
                 MangaTag(
                     key = jo.getString("slug"),
                     title = jo.getString("name").toTitleCase(),
