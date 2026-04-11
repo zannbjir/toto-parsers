@@ -1,16 +1,15 @@
 package org.koitharu.kotatsu.parsers.site.comicaso
 
-import androidx.collection.ArrayMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
-import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.util.*
 import org.koitharu.kotatsu.parsers.util.json.*
+import java.util.*
 
 internal abstract class ComicasoParser(
 	context: MangaLoaderContext,
@@ -162,16 +161,23 @@ internal abstract class ComicasoParser(
 			else -> null
 		}
 
-		val tags = json.optJSONArray("genres")?.let { arr ->
-			(0 until arr.length()).mapToSet { i ->
-				val genre = arr.getString(i)
-				MangaTag(
-					key = genre.lowercase(sourceLocale),
-					title = genre.toTitleCase(sourceLocale),
-					source = source,
+		val genresArray = json.optJSONArray("genres")
+		val tags = if (genresArray != null) {
+			val result = LinkedHashSet<MangaTag>(genresArray.length())
+			for (i in 0 until genresArray.length()) {
+				val genre = genresArray.getString(i)
+				result.add(
+					MangaTag(
+						key = genre.lowercase(sourceLocale),
+						title = genre.toTitleCase(sourceLocale),
+						source = source,
+					),
 				)
 			}
-		} ?: emptySet()
+			result as Set<MangaTag>
+		} else {
+			emptySet()
+		}
 
 		val authors = setOfNotNull(
 			author,
@@ -179,23 +185,28 @@ internal abstract class ComicasoParser(
 		)
 
 		val chaptersArray = json.optJSONArray("chapters") ?: JSONArray()
-		val chapters = (0 until chaptersArray.length()).map { i ->
+		val chapters = ArrayList<MangaChapter>(chaptersArray.length())
+		for (i in 0 until chaptersArray.length()) {
 			val ch = chaptersArray.getJSONObject(i)
 			val chSlug = ch.getString("slug")
 			val chTitle = ch.getString("title")
 			val chDate = ch.optLong("date").takeIf { it != 0L }?.times(1000L) ?: 0L
-			MangaChapter(
-				id = generateUid("/komik/$slug/$chSlug/"),
-				title = chTitle,
-				number = extractChapterNumber(chTitle),
-				volume = 0,
-				url = "/komik/$slug/$chSlug/",
-				scanlator = null,
-				uploadDate = chDate,
-				branch = null,
-				source = source,
+			chapters.add(
+				MangaChapter(
+					id = generateUid("/komik/$slug/$chSlug/"),
+					title = chTitle,
+					number = extractChapterNumber(chTitle),
+					volume = 0,
+					url = "/komik/$slug/$chSlug/",
+					scanlator = null,
+					uploadDate = chDate,
+					branch = null,
+					source = source,
+				),
 			)
-		}.reversed() // index.json urutan terbaru di atas, Kotatsu butuh ascending
+		}
+		// index.json urutan terbaru di atas, Kotatsu butuh ascending
+		chapters.reverse()
 
 		return manga.copy(
 			title = title,
@@ -221,22 +232,33 @@ internal abstract class ComicasoParser(
 		}
 	}
 
+	// Helper: konversi JSONArray dari index.json ke list DTO internal
 	private fun JSONArray.toMangaDtoList(): List<MangaIndexDto> {
-		return (0 until length()).map { i ->
+		val result = ArrayList<MangaIndexDto>(length())
+		for (i in 0 until length()) {
 			val jo = getJSONObject(i)
-			MangaIndexDto(
-				slug = jo.getString("slug"),
-				title = jo.getString("title"),
-				thumbnail = jo.optString("thumbnail").takeIf { it.isNotBlank() },
-				status = jo.optString("status").takeIf { it.isNotBlank() },
-				type = jo.optString("type").takeIf { it.isNotBlank() },
-				genres = jo.optJSONArray("genres")?.let { arr ->
-					(0 until arr.length()).map { arr.getString(it) }
-				} ?: emptyList(),
-				mangaDate = jo.optLong("manga_date").takeIf { it != 0L },
-				updatedAt = jo.optLong("updated_at").takeIf { it != 0L },
+			val genresArr = jo.optJSONArray("genres")
+			val genres = if (genresArr != null) {
+				val list = ArrayList<String>(genresArr.length())
+				for (j in 0 until genresArr.length()) list.add(genresArr.getString(j))
+				list as List<String>
+			} else {
+				emptyList()
+			}
+			result.add(
+				MangaIndexDto(
+					slug = jo.getString("slug"),
+					title = jo.getString("title"),
+					thumbnail = jo.optString("thumbnail").takeIf { it.isNotBlank() },
+					status = jo.optString("status").takeIf { it.isNotBlank() },
+					type = jo.optString("type").takeIf { it.isNotBlank() },
+					genres = genres,
+					mangaDate = jo.optLong("manga_date").takeIf { it != 0L },
+					updatedAt = jo.optLong("updated_at").takeIf { it != 0L },
+				),
 			)
 		}
+		return result
 	}
 
 	private fun extractChapterNumber(title: String): Float {
@@ -244,6 +266,7 @@ internal abstract class ComicasoParser(
 			?.value?.replace(',', '.')?.toFloatOrNull() ?: 0f
 	}
 
+	// Internal DTO untuk index.json
 	private data class MangaIndexDto(
 		val slug: String,
 		val title: String,
@@ -253,11 +276,7 @@ internal abstract class ComicasoParser(
 		val genres: List<String>,
 		val mangaDate: Long?,
 		val updatedAt: Long?,
-	) {
-		fun toManga(source: MangaParserSource): Manga {
-			TODO() 
-		}
-	}
+	)
 
 	private fun MangaIndexDto.toManga(): Manga = Manga(
 		id = generateUid("/komik/$slug/"),
