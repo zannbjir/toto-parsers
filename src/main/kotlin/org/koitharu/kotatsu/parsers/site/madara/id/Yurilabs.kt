@@ -7,6 +7,7 @@ import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 import org.koitharu.kotatsu.parsers.util.*
+import org.jsoup.nodes.Document
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -17,95 +18,98 @@ internal class Yurilabs(context: MangaLoaderContext) :
 
     override val sourceLocale: Locale = Locale("id")
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val doc = webClient.httpGet("https://$domain").parseHtml()
-        val tags = doc.select(".genres__collapse ul.list-unstyled a").mapNotNull {
-            val name = it.text().replace(Regex("""\(\d+\)"""), "").trim()
-            val value = it.attrAsRelativeUrl("href").removeSuffix("/").substringAfterLast("/")
-            if (name.isNotBlank() && value.isNotBlank()) MangaTag(title = name, key = value, source = source) else null
-        }.toSet()
-        return MangaListFilterOptions(availableTags = tags, availableStates = emptySet(), availableContentTypes = emptySet())
-    }
-
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-        val url = buildString {
-            append("https://").append(domain)
-            if (!filter.query.isNullOrEmpty()) {
-                append("/page/").append(page).append("/?s=").append(filter.query.urlEncoded()).append("&post_type=wp-manga")
-            } else if (filter.tags.isNotEmpty()) {
-                val tag = filter.tags.first()
-                append("/series-genre/").append(tag.key).append("/page/").append(page).append("/")
-            } else {
-                append("/series/page/").append(page).append("/")
-            }
-        }
-        val docs = webClient.httpGet(url).parseHtml()
-        return docs.select("div.manga__item").mapNotNull {
-            val a = it.selectFirst("h2 a, .post-title a") ?: return@mapNotNull null
-            Manga(
-                id = generateUid(a.attrAsRelativeUrl("href")),
-                url = a.attrAsRelativeUrl("href"),
-                title = a.text().trim(),
-                altTitles = emptySet(),
-                publicUrl = a.attrAsAbsoluteUrl("href"),
-                rating = RATING_UNKNOWN,
-                contentRating = ContentRating.ADULT,
-                coverUrl = it.selectFirst("div.manga__thumb img, .summary_image img")?.src(),
-                tags = emptySet(),
-                state = null,
-                authors = emptySet(),
-                source = source
-            )
-        }
-    }
-
+    // ================= DETAIL + CHAPTER (FIX UTAMA) =================
     override suspend fun getDetails(manga: Manga): Manga {
-        val baseManga = super.getDetails(manga)
-        val publicUrl = manga.url.toAbsoluteUrl(domain)
-        val docs = webClient.httpGet(publicUrl).parseHtml()
-        
-        val allChapters = mutableListOf<MangaChapter>()
-        val mangaId = docs.selectFirst("#manga-chapters-holder")?.attr("data-id")
-        
-        if (!mangaId.isNullOrEmpty()) {
-            val formBody = mapOf(
-                "action" to "manga_get_chapters",
-                "manga" to mangaId
-            )
-            
-            val xhrHeaders = mapOf(
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to publicUrl
-            ).toHeaders()
+        val url = manga.url.toAbsoluteUrl(domain)
+        val doc = webClient.httpGet(url).parseHtml()
 
-            val ajaxUrl = "https://$domain/wp-admin/admin-ajax.php".toHttpUrl()
-            val ajaxDocs = webClient.httpPost(ajaxUrl, formBody, xhrHeaders).parseHtml()
-            
-            allChapters.addAll(parseChapters(ajaxDocs))
-            
-            val pagination = ajaxDocs.selectFirst("div.pagination")
-            if (pagination != null) {
-                val lastPage = pagination.select("a[data-page]").mapNotNull { it.attr("data-page").toIntOrNull() }.maxOrNull() ?: 1
-                for (p in 2..lastPage) {
-                    val pageDocs = webClient.httpGet("$publicUrl?t=$p").parseHtml()
-                    allChapters.addAll(parseChapters(pageDocs))
-                }
-            }
+        // Ambil base dulu dari MadaraParser
+        var result = super.getDetails(manga)
+
+        // === DESKRIPSI ===
+        val description = doc.selectFirst(".summary__content, .description-summary .summary__content")
+            ?.text()?.trim() ?: result.description
+
+        // === GENRE / TAGS ===
+        val tags = doc.select(".genres-content a, .post-content_item.genres a")
+            .mapNotNull { it.text().trim() }
+            .map { MangaTag(it, it, source) }
+            .toSet()
+
+        // === AUTHOR & ARTIST ===
+        val author = doc.selectFirst(".author-content a, .post-content_item.author a")?.text()?.trim()
+        val artist = doc.selectFirst(".artist-content a, .post-content_item.artist a")?.text()?.trim()
+
+        // === STATUS ===
+        val statusText = doc.selectFirst(".post-content_item:contains(Status) .summary-content")?.text()?.trim()
+        val status = when (statusText?.lowercase()) {
+            "ongoing" -> MangaState.ONGOING
+            "completed" -> MangaState.COMPLETED
+            else -> MangaState.UNKNOWN
         }
 
-        if (allChapters.isEmpty()) allChapters.addAll(parseChapters(docs))
+        // === AMBIL SEMUA CHAPTER via AJAX + Pagination ===
+        val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
+            ?: return result // fallback kalau tidak ketemu
 
-        return baseManga.copy(chapters = allChapters.distinctBy { it.url }.sortedByDescending { it.number })
+        val allChapters = mutableListOf<MangaChapter>()
+
+        // First AJAX call
+        val formBody = mapOf(
+            "action" to "manga_get_chapters",
+            "manga" to mangaId
+        )
+        val ajaxHeaders = mapOf(
+            "X-Requested-With" to "XMLHttpRequest",
+            "Referer" to url,
+            "Origin" to "https://$domain"
+        ).toHeaders()
+
+        val ajaxUrl = "https://$domain/wp-admin/admin-ajax.php".toHttpUrl()
+        var ajaxDoc = webClient.httpPost(ajaxUrl, formBody, ajaxHeaders).parseHtml()
+
+        allChapters.addAll(parseChapters(ajaxDoc))
+
+        var currentPage = 2
+        while (true) {
+            val pagination = ajaxDoc.selectFirst("div.pagination, .wp-pagenavi, .page-numbers")
+            val lastPage = pagination?.select("a.page-numbers:not(.next), a[data-page]")
+                ?.mapNotNull { it.text().toIntOrNull() }
+                ?.maxOrNull() ?: 1
+
+            if (currentPage > lastPage) break
+
+            val nextPageDoc = webClient.httpGet("$url?t=$currentPage").parseHtml()
+            val moreChapters = parseChapters(nextPageDoc)
+            if (moreChapters.isEmpty()) break
+
+            allChapters.addAll(moreChapters)
+            currentPage++
+            ajaxDoc = nextPageDoc
+        }
+
+        val finalChapters = allChapters
+            .distinctBy { it.url }
+            .sortedBy { it.number }
+
+        return result.copy(
+            description = description,
+            tags = tags,
+            authors = author?.let { setOf(it) } ?: emptySet(),
+            artists = artist?.let { setOf(it) } ?: emptySet(),
+            state = status,
+            chapters = finalChapters
+        )
     }
 
-    private fun parseChapters(doc: org.jsoup.nodes.Document): List<MangaChapter> {
-        return doc.select("li.wp-manga-chapter").mapNotNull { node ->
+    private fun parseChapters(doc: Document): List<MangaChapter> {
+        return doc.select("li.wp-manga-chapter, .listing-chapters_wrap .wp-manga-chapter").mapNotNull { node ->
             val a = node.selectFirst("a") ?: return@mapNotNull null
             val url = a.attrAsRelativeUrl("href")
             val title = a.text().trim()
-            val dateText = node.selectFirst("span.chapter-release-date i")?.text()?.trim() ?: ""
+            val dateText = node.selectFirst("span.chapter-release-date, .chapter-release-date")?.text()?.trim() ?: ""
             val numMatch = Regex("""[0-9]+(\.[0-9]+)?""").findAll(title).lastOrNull()?.value
-            
+
             MangaChapter(
                 id = generateUid(url),
                 title = title,
@@ -121,18 +125,29 @@ internal class Yurilabs(context: MangaLoaderContext) :
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val docs = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
-        return docs.select(".reading-content .page-break img").mapNotNull { img ->
+        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+        return doc.select(".reading-content .page-break img").mapNotNull { img ->
             val src = img.attr("data-src").ifBlank { img.attr("src") }.trim()
-            if (src.isNotBlank()) MangaPage(generateUid(src), src.toRelativeUrl(domain), null, source) else null
+            if (src.isNotBlank()) {
+                MangaPage(
+                    id = generateUid(src),
+                    url = src.toRelativeUrl(domain),
+                    preview = null,
+                    source = source
+                )
+            } else null
         }
     }
 
     private fun parseDate(dateStr: String): Long {
         if (dateStr.isEmpty()) return 0L
         return try {
-            val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            val sdf = SimpleDateFormat("MMMM d, yyyy", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
             sdf.parse(dateStr)?.time ?: 0L
-        } catch (e: Exception) { 0L }
+        } catch (e: Exception) {
+            0L
+        }
     }
 }
