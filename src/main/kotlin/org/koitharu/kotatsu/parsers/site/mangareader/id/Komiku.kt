@@ -13,7 +13,7 @@ import java.util.EnumSet
 internal class Komiku(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.KOMIKU, "komiku.org", pageSize = 20, searchPageSize = 10) {
 
-	private val apiDomain = "api.komiku.id"
+	private val apiDomain = "api.komiku.org"
 	override val datePattern = "dd/MM/yyyy"
 	override val selectPage = "#Baca_Komik img"
 	override val selectTestScript = "script:containsData(thisIsNeverFound)"
@@ -56,7 +56,7 @@ internal class Komiku(context: MangaLoaderContext) :
 					append(apiDomain)
 					append(listUrl)
 					if (page > 1) {
-						append("/page/")
+						append("page/")
 						append(page.toString())
 					}
 					append("/?")
@@ -90,7 +90,7 @@ internal class Komiku(context: MangaLoaderContext) :
 					}
 
 					filter.states.oneOrThrowIfMany()?.let {
-						append("&status=")
+						append("&statusmanga=")
 						when (it) {
 							MangaState.ONGOING -> append("ongoing")
 							MangaState.FINISHED -> append("end")
@@ -175,20 +175,24 @@ internal class Komiku(context: MangaLoaderContext) :
 				source = source,
 			)
 		}
+
 		val statusText = docs.selectFirst("table.inftable tr > td:contains(Status) + td")?.text()
 		val state = when {
-			statusText?.contains("Ongoing") == true -> MangaState.ONGOING
-			statusText?.contains("Completed") == true -> MangaState.FINISHED
-			statusText?.contains("Tamat", ignoreCase = true) == true -> MangaState.FINISHED
-			statusText?.contains("End", ignoreCase = true) == true -> MangaState.FINISHED
-
+			statusText?.contains("Ongoing", ignoreCase = true) == true ||
+				statusText?.contains("On Going", ignoreCase = true) == true -> MangaState.ONGOING
+			statusText?.contains("Completed", ignoreCase = true) == true ||
+				statusText?.contains("Tamat", ignoreCase = true) == true ||
+				statusText?.contains("End", ignoreCase = true) == true -> MangaState.FINISHED
 			else -> null
 		}
 
-		val author = docs.selectFirst("table.inftable tr:has(td:contains(Pengarang)) td:last-child")?.text()?.trim()
+		val author = docs.selectFirst(
+			"table.inftable td:contains(Pengarang) + td, table.inftable td:contains(Komikus) + td",
+		)?.text()?.trim()
 
-		val altTitle =
-			docs.selectFirst("table.inftable tr:has(td:contains(Judul Indonesia)) td:last-child")?.text()?.trim()
+		val altTitle = docs.selectFirst(
+			"table.inftable tr:has(td:contains(Judul Indonesia)) td:last-child",
+		)?.text()?.trim()
 		val altTitles = if (!altTitle.isNullOrBlank()) setOf(altTitle) else emptySet()
 
 		val thumbnail = docs.selectFirst("div.ims > img")?.attr("src")?.substringBeforeLast("?")
