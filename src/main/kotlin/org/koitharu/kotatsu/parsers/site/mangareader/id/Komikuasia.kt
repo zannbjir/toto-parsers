@@ -11,7 +11,7 @@ import java.util.EnumSet
 
 @MangaSourceParser("KOMIKUASIA", "Komiku.asia", "id")
 internal class KomikuAsia(context: MangaLoaderContext) :
-    MangaReaderParser(context, MangaParserSource.KOMIKU_ASIA, "01.komiku.asia", pageSize = 20, searchPageSize = 10) {
+    MangaReaderParser(context, MangaParserSource.KOMIKUASIA, "01.komiku.asia", pageSize = 20, searchPageSize = 10) {
 
     override val datePattern = "MMMM dd, yyyy"
     override val selectPage = "div#readerarea img"
