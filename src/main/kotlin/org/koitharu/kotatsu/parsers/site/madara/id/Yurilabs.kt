@@ -61,82 +61,28 @@ internal class Yurilabs(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        // Ambil detail dasar dari parent (cover, title, dll)
-        val baseManga = super.getDetails(manga)
+        val baseManga = super.getDetails(manga)  // pakai logic Madara bawaan dulu
         val publicUrl = manga.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(publicUrl).parseHtml()
 
-        // --- Deskripsi (fallback jika super.getDetails tidak dapat) ---
         val description = doc.selectFirst(".summary__content, .description-summary .summary__content")?.text()?.trim()
             ?: baseManga.description
 
-        // --- Ambil semua chapters via AJAX dengan pagination ---
-        val mangaId = doc.selectFirst("#manga-chapters-holder")?.attr("data-id")
-        val allChapters = mutableListOf<MangaChapter>()
-
-        if (!mangaId.isNullOrEmpty()) {
-            var currentPage = 1
-            var hasMore = true
-
-            while (hasMore) {
-                val formBody = mapOf(
-                    "action" to "manga_get_chapters",
-                    "manga" to mangaId,
-                    "page" to currentPage.toString()
-                )
-
-                val headers = Headers.Builder()
-                    .add("X-Requested-With", "XMLHttpRequest")
-                    .add("Referer", publicUrl)
-                    .build()
-
-                val ajaxUrl = "https://$domain/wp-admin/admin-ajax.php".toHttpUrl()
-                val response = webClient.httpPost(ajaxUrl, formBody, headers)
-
-                // Response bisa berupa HTML atau JSON? Madara biasanya mengembalikan HTML
-                val html = response.body?.string() ?: break
-                val fragment = html.parseHtmlFragment()
-
-                val chaptersOnPage = parseChapters(fragment)
-                if (chaptersOnPage.isEmpty()) {
-                    hasMore = false
-                } else {
-                    allChapters.addAll(chaptersOnPage)
-                    // Cek pagination: apakah ada tombol next / data-page maks?
-                    val pagination = fragment.selectFirst("div.pagination")
-                    if (pagination != null) {
-                        val lastPage = pagination.select("a[data-page]").mapNotNull { it.attr("data-page").toIntOrNull() }.maxOrNull()
-                        if (lastPage != null && currentPage >= lastPage) {
-                            hasMore = false
-                        } else {
-                            currentPage++
-                        }
-                    } else {
-                        // Jika tidak ada pagination, berarti hanya satu halaman
-                        hasMore = false
-                    }
-                }
-            }
-        }
-
-        val finalChapters = if (allChapters.isEmpty()) {
-            parseChapters(doc)
-        } else {
-            allChapters.distinctBy { it.url }.sortedByDescending { it.number }
-        }
+        // === CHAPTERS (disederhanakan karena situs ini chapter-nya static) ===
+        val chapters = parseChapters(doc)
 
         return baseManga.copy(
             description = description,
-            chapters = finalChapters
+            chapters = chapters
         )
     }
 
     private fun parseChapters(doc: org.jsoup.nodes.Document): List<MangaChapter> {
-        return doc.select("li.wp-manga-chapter").mapNotNull { node ->
+        return doc.select("li.wp-manga-chapter, .chapter-link, .wp-manga-chapter").mapNotNull { node ->
             val a = node.selectFirst("a") ?: return@mapNotNull null
             val url = a.attrAsRelativeUrl("href")
             val title = a.text().trim()
-            val dateText = node.selectFirst("span.chapter-release-date i")?.text()?.trim() ?: ""
+            val dateText = node.selectFirst("span.chapter-release-date i, time")?.text()?.trim() ?: ""
             val numMatch = Regex("""[0-9]+(\.[0-9]+)?""").findAll(title).lastOrNull()?.value
 
             MangaChapter(
@@ -155,7 +101,7 @@ internal class Yurilabs(context: MangaLoaderContext) :
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
-        return doc.select(".reading-content .page-break img").mapNotNull { img ->
+        return doc.select(".reading-content .page-break img, .reading-content img").mapNotNull { img ->
             val src = img.attr("data-src").ifBlank { img.attr("src") }.trim()
             if (src.isNotBlank()) MangaPage(generateUid(src), src.toRelativeUrl(domain), null, source) else null
         }
