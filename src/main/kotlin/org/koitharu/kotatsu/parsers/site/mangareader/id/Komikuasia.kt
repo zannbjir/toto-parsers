@@ -29,7 +29,7 @@ internal class KomikuAsia(context: MangaLoaderContext) :
         )
 
     override suspend fun getFilterOptions() = MangaListFilterOptions(
-        availableTags = fetchAvailableTags(),
+        availableTags = getOrCreateTagMap().values.toSet(),
         availableStates = EnumSet.of(
             MangaState.ONGOING,
             MangaState.FINISHED,
@@ -57,12 +57,12 @@ internal class KomikuAsia(context: MangaLoaderContext) :
             append("?")
 
             when {
-                // Perbaikan utama: jangan pakai MangaListFilter.Search / Advanced langsung
                 !filter.query.isNullOrEmpty() -> {
                     append("title=")
                     append(filter.query.urlEncoded())
                 }
-                filter is MangaListFilter.Advanced -> {
+                else -> {
+                    // Handle filter tags, states, types
                     filter.states.oneOrThrowIfMany()?.let {
                         append("status=")
                         append(
@@ -101,15 +101,6 @@ internal class KomikuAsia(context: MangaLoaderContext) :
                             SortOrder.ALPHABETICAL_DESC -> "titlereverse"
                             SortOrder.UPDATED -> "update"
                             SortOrder.NEWEST -> "latest"
-                            SortOrder.POPULARITY -> "popular"
-                            else -> "update"
-                        }
-                    )
-                }
-                else -> {
-                    append("order=")
-                    append(
-                        when (order) {
                             SortOrder.POPULARITY -> "popular"
                             else -> "update"
                         }
@@ -171,7 +162,6 @@ internal class KomikuAsia(context: MangaLoaderContext) :
         return parseInfo(docs, manga, chapters)
     }
 
-    // parseInfo sudah bagus, tetap dipakai
     override suspend fun parseInfo(docs: Document, manga: Manga, chapters: List<MangaChapter>): Manga {
         val detailsBlock = docs.selectFirst("div.bigcontent, div.animefull, div.main-info, div.postbody")
         val tags = detailsBlock?.select("div.gnr a, .mgen a, .seriestugenre a")
@@ -226,12 +216,13 @@ internal class KomikuAsia(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun fetchAvailableTags(): Set<MangaTag> {
+
+    override suspend fun getOrCreateTagMap(): Map<String, MangaTag> {
         val doc = webClient.httpGet("https://$domain$listUrl").parseHtml()
-        return doc.select("ul.genrez li").mapNotNullToSet { li ->
-            val value = li.selectFirst("input[type=checkbox]")?.attr("value") ?: return@mapNotNullToSet null
-            val name = li.selectFirst("label")?.text()?.trim() ?: return@mapNotNullToSet null
-            MangaTag(key = value, title = name.toTitleCase(sourceLocale), source = source)
-        }
+        return doc.select("ul.genrez li").mapNotNull { li ->
+            val value = li.selectFirst("input[type=checkbox]")?.attr("value") ?: return@mapNotNull null
+            val name = li.selectFirst("label")?.text()?.trim() ?: return@mapNotNull null
+            value to MangaTag(key = value, title = name.toTitleCase(sourceLocale), source = source)
+        }.toMap()
     }
 }
