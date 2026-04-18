@@ -12,7 +12,6 @@ import org.koitharu.kotatsu.parsers.util.*
 import java.util.EnumSet
 import java.util.Locale
 
-
 @MangaSourceParser("RYZUKOMIK", "Ryzukomik", "id")
 internal class Ryzukomik(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.RYZUKOMIK, 20) {
@@ -53,19 +52,21 @@ internal class Ryzukomik(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val apiUrl = when (filter) {
-			is MangaListFilter.Search -> {
-				"$apiBase?s=${filter.query.urlEncoded()}&page=$page"
-			}
-			is MangaListFilter.Advanced -> {
+		val apiUrl = buildString {
+			append(apiBase)
+			
+			if (!filter.query.isNullOrEmpty()) {
+				// Search mode
+				append("?s=").append(filter.query!!.urlEncoded()).append("&page=").append(page)
+			} else {
+				// Browse / Filter mode
 				val tag = filter.tags.oneOrThrowIfMany()
 				if (tag != null) {
-					"$apiBase?genre=${tag.key.urlEncoded()}&page=$page"
+					append("?genre=").append(tag.key.urlEncoded()).append("&page=").append(page)
 				} else {
-					"$apiBase?latest=1&page=$page"
+					append("?latest=1&page=").append(page)
 				}
 			}
-			else -> "$apiBase?latest=1&page=$page"
 		}
 
 		val json = webClient.httpGet(apiUrl, buildHeaders()).parseJson()
@@ -98,7 +99,7 @@ internal class Ryzukomik(context: MangaLoaderContext) :
 			title = title.replace("Komik", "").trim(),
 			altTitles = emptySet(),
 			rating = RATING_UNKNOWN,
-			contentRating = null,
+			contentRating = null, // Set based on the site's overall content
 			coverUrl = cover,
 			tags = emptySet(),
 			state = null,
