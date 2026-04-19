@@ -9,7 +9,6 @@ import org.koitharu.kotatsu.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 
-
 @MangaSourceParser("KOMIKUASIA", "Komiku.asia", "id")
 internal class KomikuAsia(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.KOMIKUASIA, "01.komiku.asia", pageSize = 20, searchPageSize = 10) {
@@ -30,8 +29,7 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 		)
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions(
-		// Pakai fetchAvailableTags() bukan getOrCreateTagMap()
-		availableTags = fetchAvailableTags(),
+		availableTags = getAvailableTags(),
 		availableStates = EnumSet.of(
 			MangaState.ONGOING,
 			MangaState.FINISHED,
@@ -50,75 +48,58 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 		val url = buildString {
 			append("https://")
 			append(domain)
-			when (filter) {
-				is MangaListFilter.Search -> {
-					append(listUrl)
-					if (page > 1) {
-						append("page/")
-						append(page)
-						append("/")
-					}
-					append("?title=")
-					append(filter.query.urlEncoded())
-				}
-				is MangaListFilter.Advanced -> {
-					append(listUrl)
-					if (page > 1) {
-						append("page/")
-						append(page)
-						append("/")
-					}
-					append("?")
-					filter.states.oneOrThrowIfMany()?.let {
-						append("status=")
-						append(when (it) {
+			append(listUrl)
+			if (page > 1) {
+				append("page/")
+				append(page)
+				append("/")
+			}
+			append("?")
+			if (!filter.query.isNullOrEmpty()) {
+				append("title=")
+				append(filter.query!!.urlEncoded())
+			} else {
+				filter.states.oneOrThrowIfMany()?.let {
+					append("status=")
+					append(
+						when (it) {
 							MangaState.ONGOING -> "ongoing"
 							MangaState.FINISHED -> "completed"
 							MangaState.PAUSED -> "hiatus"
 							MangaState.ABANDONED -> "dropped"
 							else -> ""
-						})
-						append("&")
-					}
-					filter.types.oneOrThrowIfMany()?.let {
-						append("type=")
-						append(when (it) {
+						},
+					)
+					append("&")
+				}
+				filter.types.oneOrThrowIfMany()?.let {
+					append("type=")
+					append(
+						when (it) {
 							ContentType.MANGA -> "Manga"
 							ContentType.MANHWA -> "Manhwa"
 							ContentType.MANHUA -> "Manhua"
 							ContentType.COMICS -> "Comic"
 							else -> ""
-						})
-						append("&")
-					}
-					filter.tags.forEach { tag ->
-						append("genre[]=")
-						append(tag.key)
-						append("&")
-					}
-					append("order=")
-					append(when (order) {
+						},
+					)
+					append("&")
+				}
+				filter.tags.forEach { tag ->
+					append("genre[]=")
+					append(tag.key)
+					append("&")
+				}
+				append("order=")
+				append(
+					when (order) {
 						SortOrder.ALPHABETICAL -> "title"
 						SortOrder.ALPHABETICAL_DESC -> "titlereverse"
 						SortOrder.NEWEST -> "latest"
 						SortOrder.POPULARITY -> "popular"
 						else -> "update"
-					})
-				}
-				else -> {
-					append(listUrl)
-					if (page > 1) {
-						append("page/")
-						append(page)
-						append("/")
-					}
-					append("?order=")
-					append(when (order) {
-						SortOrder.POPULARITY -> "popular"
-						SortOrder.NEWEST -> "latest"
-						else -> "update"
-					})
-				}
+					},
+				)
 			}
 		}
 		return parseMangaList(webClient.httpGet(url).parseHtml())
@@ -128,13 +109,10 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 		return docs.select(selectMangaList).mapNotNull { element ->
 			val a = element.selectFirst("a") ?: return@mapNotNull null
 			val relativeUrl = a.attrAsRelativeUrl("href").toRelativeUrl(domain)
-
-			// Title: coba dari attr title dulu, fallback ke .tt / h3 / h4
 			val title = a.attr("title").trim().ifEmpty {
 				element.selectFirst(".tt, h3, h4, .bigor .tt")?.text()?.trim()
 					?: return@mapNotNull null
 			}
-
 			Manga(
 				id = generateUid(relativeUrl),
 				url = relativeUrl,
@@ -158,7 +136,6 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 
 		val chapters = docs.select(selectChapter).mapChapters(reversed = true) { index, element ->
 			val a = element.selectFirst("a") ?: return@mapChapters null
-			// Pastikan URL di-resolve relatif terhadap domain
 			val url = a.attrAsRelativeUrl("href").toRelativeUrl(domain)
 			val title = element.select(".lch a, .chapternum").text().ifBlank { a.text() }.trim()
 			val dateText = element.selectFirst(".chapterdate")?.text()
@@ -232,8 +209,7 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 		)
 	}
 
-	// Ganti getOrCreateTagMap() (tidak exist/salah signature) dengan fetchAvailableTags()
-	override suspend fun fetchAvailableTags(): Set<MangaTag> {
+	private suspend fun getAvailableTags(): Set<MangaTag> {
 		val doc = webClient.httpGet("https://$domain$listUrl").parseHtml()
 		return doc.select("ul.genrez li").mapNotNullToSet { li ->
 			val value = li.selectFirst("input[type=checkbox]")?.attr("value") ?: return@mapNotNullToSet null
