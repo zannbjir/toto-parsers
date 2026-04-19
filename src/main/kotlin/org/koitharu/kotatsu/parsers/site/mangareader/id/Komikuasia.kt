@@ -8,10 +8,14 @@ import org.koitharu.kotatsu.parsers.site.mangareader.MangaReaderParser
 import org.koitharu.kotatsu.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.EnumSet
+import java.util.Locale
+
 
 @MangaSourceParser("KOMIKUASIA", "Komiku.asia", "id")
 internal class KomikuAsia(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.KOMIKUASIA, "01.komiku.asia", pageSize = 20, searchPageSize = 10) {
+
+	override val sourceLocale: Locale = Locale("id")
 
 	override val datePattern = "MMMM dd, yyyy"
 	override val selectPage = "div#readerarea img"
@@ -61,28 +65,24 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 			} else {
 				filter.states.oneOrThrowIfMany()?.let {
 					append("status=")
-					append(
-						when (it) {
-							MangaState.ONGOING -> "ongoing"
-							MangaState.FINISHED -> "completed"
-							MangaState.PAUSED -> "hiatus"
-							MangaState.ABANDONED -> "dropped"
-							else -> ""
-						},
-					)
+					append(when (it) {
+						MangaState.ONGOING -> "ongoing"
+						MangaState.FINISHED -> "completed"
+						MangaState.PAUSED -> "hiatus"
+						MangaState.ABANDONED -> "dropped"
+						else -> ""
+					})
 					append("&")
 				}
 				filter.types.oneOrThrowIfMany()?.let {
 					append("type=")
-					append(
-						when (it) {
-							ContentType.MANGA -> "Manga"
-							ContentType.MANHWA -> "Manhwa"
-							ContentType.MANHUA -> "Manhua"
-							ContentType.COMICS -> "Comic"
-							else -> ""
-						},
-					)
+					append(when (it) {
+						ContentType.MANGA -> "Manga"
+						ContentType.MANHWA -> "Manhwa"
+						ContentType.MANHUA -> "Manhua"
+						ContentType.COMICS -> "Comic"
+						else -> ""
+					})
 					append("&")
 				}
 				filter.tags.forEach { tag ->
@@ -91,15 +91,13 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 					append("&")
 				}
 				append("order=")
-				append(
-					when (order) {
-						SortOrder.ALPHABETICAL -> "title"
-						SortOrder.ALPHABETICAL_DESC -> "titlereverse"
-						SortOrder.NEWEST -> "latest"
-						SortOrder.POPULARITY -> "popular"
-						else -> "update"
-					},
-				)
+				append(when (order) {
+					SortOrder.ALPHABETICAL -> "title"
+					SortOrder.ALPHABETICAL_DESC -> "titlereverse"
+					SortOrder.NEWEST -> "latest"
+					SortOrder.POPULARITY -> "popular"
+					else -> "update"
+				})
 			}
 		}
 		return parseMangaList(webClient.httpGet(url).parseHtml())
@@ -207,6 +205,53 @@ internal class KomikuAsia(context: MangaLoaderContext) :
 			chapters = chapters,
 			coverUrl = cover ?: manga.coverUrl,
 		)
+	}
+
+	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+
+		// Coba HTML images dulu dengan imgAttr() equivalent
+		val htmlPages = doc.select(selectPage).mapNotNull { img ->
+			// Urutan sesuai Mihon MangaThemesia.imgAttr()
+			val url = when {
+				img.hasAttr("data-lazy-src") -> img.absUrl("data-lazy-src")
+				img.hasAttr("data-src") -> img.absUrl("data-src")
+				img.hasAttr("data-cfsrc") -> img.absUrl("data-cfsrc")
+				else -> img.absUrl("src")
+			}
+			if (url.isBlank()) return@mapNotNull null
+			url
+		}
+
+		if (htmlPages.isNotEmpty()) {
+			return htmlPages.mapIndexed { i, url ->
+				MangaPage(
+					id = generateUid("$i-${chapter.url}"),
+					url = url.toRelativeUrl(domain),
+					preview = null,
+					source = source,
+				)
+			}
+		}
+
+		val docString = doc.toString()
+		val imageListRegex = Regex(""""images"\s*:\s*(\[.*?])""", RegexOption.DOT_MATCHES_ALL)
+		val imageListJson = imageListRegex.find(docString)?.groupValues?.getOrNull(1) ?: return emptyList()
+
+		return try {
+			val arr = org.json.JSONArray(imageListJson)
+			(0 until arr.length()).mapNotNull { i ->
+				val imgUrl = arr.optString(i).ifBlank { return@mapNotNull null }
+				MangaPage(
+					id = generateUid("$i-${chapter.url}"),
+					url = imgUrl.toRelativeUrl(domain),
+					preview = null,
+					source = source,
+				)
+			}
+		} catch (_: Exception) {
+			emptyList()
+		}
 	}
 
 	private suspend fun getAvailableTags(): Set<MangaTag> {
