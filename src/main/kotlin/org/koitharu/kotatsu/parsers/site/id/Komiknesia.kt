@@ -22,6 +22,11 @@ internal class Komiknesia(context: MangaLoaderContext) :
 
 	private val apiBase = "https://api-be.komiknesia.my.id/api"
 
+    override fun getRequestHeaders(): Headers = Headers.Builder()
+		.add("Referer", "https://$domain/")
+		.add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+		.build()
+
 	private fun apiHeaders(): Headers = Headers.Builder()
 		.add("Accept", "application/json, text/plain, */*")
 		.add("Origin", "https://$domain")
