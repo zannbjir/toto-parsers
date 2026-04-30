@@ -1,8 +1,6 @@
 package org.koitharu.kotatsu.parsers.site.id
 
 import okhttp3.Headers
-import okhttp3.Interceptor
-import okhttp3.Response
 import org.json.JSONObject
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
@@ -16,10 +14,8 @@ import java.io.ByteArrayInputStream
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import java.text.SimpleDateFormat
 import java.util.EnumSet
 import java.util.Locale
-import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -28,7 +24,7 @@ import javax.net.ssl.X509TrustManager
 
 @MangaSourceParser("KOMIKNESIA", "KomikNesia", "id")
 internal class Komiknesia(context: MangaLoaderContext) :
-	PagedMangaParser(context, MangaParserSource.KOMIKNESIA, pageSize = 20) {
+	PagedMangaParser(context, MangaParserSource.KOMIKNESIA, pageSize = 40) {
 
 	override val configKeyDomain = ConfigKey.Domain("02.komiknesia.asia")
 
@@ -52,40 +48,23 @@ internal class Komiknesia(context: MangaLoaderContext) :
 		.add("Referer", "https://$domain/")
 		.build()
 
-	override fun intercept(chain: Interceptor.Chain): Response {
-		val request = chain.request()
-		val host = request.url.host
-		
-		if (host.contains("ikiru.wtf")) {
-			val rebuilt = request.newBuilder()
-				.removeHeader("Origin")
-				.header("Referer", "https://ikiru.wtf/")
-				.build()
-			return chain.proceed(rebuilt)
-		}
-		
-		val isSiteHost = host.endsWith(domain) || host.endsWith("komiknesia.my.id")
-		if (!isSiteHost) {
-			val rebuilt = request.newBuilder()
-				.removeHeader("Origin")
-				.removeHeader("Referer")
-				.build()
-			return chain.proceed(rebuilt)
-		}
-		
-		return chain.proceed(request)
-	}
-
-	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
+	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+		SortOrder.UPDATED,
+		SortOrder.NEWEST,
+		SortOrder.POPULARITY,
+		SortOrder.ALPHABETICAL,
+		SortOrder.ALPHABETICAL_DESC,
+	)
 
 	override val filterCapabilities = MangaListFilterCapabilities(
-		isMultipleTagsSupported = false,
+		isMultipleTagsSupported = true,
 		isSearchSupported = true,
-		isSearchWithFiltersSupported = false,
+		isSearchWithFiltersSupported = true,
 	)
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions(
 		availableTags = fetchTags(),
+		availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED, MangaState.PAUSED),
 	)
 
 	private val tagsCache = ConcurrentHashMap<String, Set<MangaTag>>()
@@ -93,7 +72,8 @@ internal class Komiknesia(context: MangaLoaderContext) :
 	private suspend fun fetchTags(): Set<MangaTag> {
 		tagsCache["all"]?.let { return it }
 		return runCatching {
-			val arr = apiClient.httpGet("$apiBase/categories", apiHeaders()).parseJsonArray()
+			val arr = apiClient.httpGet("$apiBase/contents/genres", apiHeaders()).parseJson()
+				.optJSONArray("data") ?: return@runCatching emptySet<MangaTag>()
 			val tags = LinkedHashSet<MangaTag>(arr.length())
 			for (i in 0 until arr.length()) {
 				val jo = arr.optJSONObject(i) ?: continue
@@ -107,32 +87,43 @@ internal class Komiknesia(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val query = filter.query?.takeIf { it.isNotBlank() }
-		if (query != null) return searchManga(query, page)
-
 		val url = buildString {
-			append(apiBase).append("/manga?page=").append(page)
-			append("&limit=").append(pageSize)
-			append("&source=local")
-			filter.tags.firstOrNull()?.key?.let { append("&category=").append(it) }
-		}
-		val json = apiClient.httpGet(url, apiHeaders()).parseJson()
-		val mangaArr = json.optJSONArray("manga") ?: return emptyList()
-		val result = ArrayList<Manga>(mangaArr.length())
-		for (i in 0 until mangaArr.length()) {
-			val item = mangaArr.optJSONObject(i) ?: continue
-			parseListItem(item)?.let { result.add(it) }
-		}
-		return result
-	}
+			append(apiBase).append("/contents?page=").append(page)
 
-	private suspend fun searchManga(query: String, page: Int): List<Manga> {
-		val url = "$apiBase/manga/search?query=${query.urlEncoded()}&page=$page&limit=$pageSize"
+			filter.query?.takeIf { it.isNotBlank() }?.let {
+				append("&q=").append(it.urlEncoded())
+			}
+
+			filter.tags.forEach { tag ->
+				append("&genre%5B%5D=").append(tag.key)
+			}
+
+			filter.states.oneOrThrowIfMany()?.let { state ->
+				val v = when (state) {
+					MangaState.ONGOING -> "Ongoing"
+					MangaState.FINISHED -> "Completed"
+					MangaState.PAUSED -> "Hiatus"
+					else -> null
+				}
+				if (v != null) append("&status=").append(v)
+			}
+
+			val orderValue = when (order) {
+				SortOrder.NEWEST -> "Added"
+				SortOrder.POPULARITY -> "Popular"
+				SortOrder.ALPHABETICAL -> "Az"
+				SortOrder.ALPHABETICAL_DESC -> "Za"
+				SortOrder.UPDATED -> ""
+				else -> ""
+			}
+			if (orderValue.isNotEmpty()) append("&orderBy=").append(orderValue)
+		}
+
 		val json = apiClient.httpGet(url, apiHeaders()).parseJson()
-		val local = json.optJSONArray("local") ?: return emptyList()
-		val result = ArrayList<Manga>(local.length())
-		for (i in 0 until local.length()) {
-			val item = local.optJSONObject(i) ?: continue
+		val arr = json.optJSONArray("data") ?: return emptyList()
+		val result = ArrayList<Manga>(arr.length())
+		for (i in 0 until arr.length()) {
+			val item = arr.optJSONObject(i) ?: continue
 			parseListItem(item)?.let { result.add(it) }
 		}
 		return result
@@ -147,8 +138,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 			.takeIf { !it.isNaN() }
 			?.let { (it / 10f).toFloat().coerceIn(0f, 1f) }
 			?: RATING_UNKNOWN
-		val status = item.optString("status")
-		val state = parseState(status)
+		val state = parseState(item.optString("status"))
 		val tagsArr = item.optJSONArray("genres")
 		val tags = if (tagsArr != null) {
 			val s = LinkedHashSet<MangaTag>(tagsArr.length())
@@ -182,21 +172,32 @@ internal class Komiknesia(context: MangaLoaderContext) :
 
 	override suspend fun getDetails(manga: Manga): Manga {
 		val slug = manga.url.trimEnd('/').substringAfterLast('/')
-		val json = apiClient.httpGet("$apiBase/manga/slug/$slug", apiHeaders()).parseJson()
+		val json = apiClient.httpGet("$apiBase/comic/$slug", apiHeaders()).parseJson()
+		val data = json.optJSONObject("data") ?: return manga
 
-		val title = json.optString("title").ifBlank { manga.title }
-		val synopsis = json.optString("synopsis").takeIf { it.isNotBlank() }
-		val cover = json.optString("thumbnail").ifBlank { json.optString("cover_background") }
-		val state = parseState(json.optString("status"))
-		val author = json.optString("author").takeIf { it.isNotBlank() && it != "Unknown" }
-		val altName = json.optString("alternative_name").takeIf { it.isNotBlank() && it != "null" }
-		val rating = json.optDouble("rating", Double.NaN)
+		val title = data.optString("title").ifBlank { manga.title }
+		val sinopsis = data.optString("sinopsis").takeIf { it.isNotBlank() }
+			?.replace(Regex("</?p\\s*/?>"), "")?.trim()
+		val altName = data.optString("alternative_name").takeIf { it.isNotBlank() && it != "null" }
+		val description = buildString {
+			sinopsis?.let { append(it) }
+			if (!altName.isNullOrBlank()) {
+				if (isNotEmpty()) append("\n\n")
+				append("Alternative Names:")
+				altName.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { append("\n").append(it) }
+			}
+		}.takeIf { it.isNotBlank() }
+
+		val cover = data.optString("thumbnail").ifBlank { data.optString("cover") }
+		val state = parseState(data.optString("status"))
+		val author = data.optString("author").takeIf { it.isNotBlank() && it != "Unknown" }
+		val rating = data.optDouble("rating", Double.NaN)
 			.takeIf { !it.isNaN() }
 			?.let { (it / 10f).toFloat().coerceIn(0f, 1f) }
 			?: RATING_UNKNOWN
 
 		val tags = LinkedHashSet<MangaTag>()
-		json.optJSONArray("genres")?.let { arr ->
+		data.optJSONArray("genres")?.let { arr ->
 			for (i in 0 until arr.length()) {
 				val g = arr.optJSONObject(i) ?: continue
 				val id = g.optInt("id", 0)
@@ -205,21 +206,17 @@ internal class Komiknesia(context: MangaLoaderContext) :
 			}
 		}
 
-		val isoFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
-			timeZone = TimeZone.getTimeZone("UTC")
-		}
-		val chaptersArr = json.optJSONArray("chapters")
+		val chaptersArr = data.optJSONArray("chapters")
 		val chapters = if (chaptersArr != null) {
 			val list = ArrayList<MangaChapter>(chaptersArr.length())
 			for (i in 0 until chaptersArr.length()) {
 				val c = chaptersArr.optJSONObject(i) ?: continue
-				val id = c.optLong("id", 0L)
-				val numStr = c.optString("chapter_number")
+				val numStr = c.optString("number")
 				val number = numStr.toFloatOrNull() ?: continue
 				val chTitle = c.optString("title").ifBlank { "Chapter $numStr" }
 				val chSlug = c.optString("slug").ifBlank { continue }
-				val chUrl = "/chapter/$chSlug?id=$id"
-				val date = isoFmt.parseSafe(c.optString("created_at"))
+				val chUrl = "/chapter/$chSlug"
+				val date = c.optJSONObject("created_at")?.optLong("time", 0L)?.let { it * 1000L } ?: 0L
 				list.add(
 					MangaChapter(
 						id = generateUid(chUrl),
@@ -239,12 +236,12 @@ internal class Komiknesia(context: MangaLoaderContext) :
 			emptyList()
 		}
 
-		val isSafe = optBoolOrInt(json, "is_safe", true)
+		val isSafe = optBoolOrInt(data, "is_safe", true)
 
 		return manga.copy(
 			title = title,
 			altTitles = setOfNotNull(altName),
-			description = synopsis,
+			description = description ?: manga.description,
 			coverUrl = cover ?: manga.coverUrl,
 			state = state,
 			authors = setOfNotNull(author),
@@ -256,14 +253,13 @@ internal class Komiknesia(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val id = chapter.url.substringAfter("?id=").substringBefore('&').ifBlank {
-			throw IllegalStateException("Missing chapter id in url ${chapter.url}")
-		}
-		val arr = apiClient.httpGet("$apiBase/chapters/$id/images", apiHeaders()).parseJsonArray()
+		val slug = chapter.url.trimEnd('/').substringAfterLast('/')
+		val json = apiClient.httpGet("$apiBase/chapters/slug/$slug", apiHeaders()).parseJson()
+		val data = json.optJSONObject("data") ?: return emptyList()
+		val arr = data.optJSONArray("images") ?: return emptyList()
 		val pages = ArrayList<MangaPage>(arr.length())
 		for (i in 0 until arr.length()) {
-			val img = arr.optJSONObject(i) ?: continue
-			val url = img.optString("image_path").ifBlank { continue }
+			val url = arr.optString(i).ifBlank { continue }
 			pages.add(
 				MangaPage(
 					id = generateUid(url),
@@ -298,7 +294,8 @@ internal class Komiknesia(context: MangaLoaderContext) :
 private object KomiknesiaSSL {
 
 	// Let's Encrypt R12 intermediate (issued by ISRG Root X1; valid until 2027-03).
-	// Bundled here because api-be.komiknesia.my.id only sends the leaf cert.
+	// Bundled here because api-be.komiknesia.my.id only sends the leaf cert,
+	// causing "Trust anchor for certification path not found" on older Android.
 	private const val LE_R12_PEM = "-----BEGIN CERTIFICATE-----\n" +
 		"MIIFBjCCAu6gAwIBAgIRAMISMktwqbSRcdxA9+KFJjwwDQYJKoZIhvcNAQELBQAw\n" +
 		"TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n" +
