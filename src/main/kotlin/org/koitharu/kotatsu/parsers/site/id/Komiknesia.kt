@@ -9,12 +9,22 @@ import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
+import org.koitharu.kotatsu.parsers.network.OkHttpWebClient
+import org.koitharu.kotatsu.parsers.network.WebClient
 import org.koitharu.kotatsu.parsers.util.*
+import java.io.ByteArrayInputStream
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 @MangaSourceParser("KOMIKNESIA", "KomikNesia", "id")
 internal class Komiknesia(context: MangaLoaderContext) :
@@ -23,6 +33,13 @@ internal class Komiknesia(context: MangaLoaderContext) :
 	override val configKeyDomain = ConfigKey.Domain("02.komiknesia.asia")
 
 	private val apiBase = "https://api-be.komiknesia.my.id/api"
+
+	private val apiClient: WebClient by lazy {
+		val newClient = context.httpClient.newBuilder()
+			.sslSocketFactory(KomiknesiaSSL.sslSocketFactory, KomiknesiaSSL.trustManager)
+			.build()
+		OkHttpWebClient(newClient, source)
+	}
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
 		.add("Referer", "https://$domain/")
@@ -76,7 +93,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 	private suspend fun fetchTags(): Set<MangaTag> {
 		tagsCache["all"]?.let { return it }
 		return runCatching {
-			val arr = webClient.httpGet("$apiBase/categories", apiHeaders()).parseJsonArray()
+			val arr = apiClient.httpGet("$apiBase/categories", apiHeaders()).parseJsonArray()
 			val tags = LinkedHashSet<MangaTag>(arr.length())
 			for (i in 0 until arr.length()) {
 				val jo = arr.optJSONObject(i) ?: continue
@@ -99,7 +116,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 			append("&source=local")
 			filter.tags.firstOrNull()?.key?.let { append("&category=").append(it) }
 		}
-		val json = webClient.httpGet(url, apiHeaders()).parseJson()
+		val json = apiClient.httpGet(url, apiHeaders()).parseJson()
 		val mangaArr = json.optJSONArray("manga") ?: return emptyList()
 		val result = ArrayList<Manga>(mangaArr.length())
 		for (i in 0 until mangaArr.length()) {
@@ -111,7 +128,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 
 	private suspend fun searchManga(query: String, page: Int): List<Manga> {
 		val url = "$apiBase/manga/search?query=${query.urlEncoded()}&page=$page&limit=$pageSize"
-		val json = webClient.httpGet(url, apiHeaders()).parseJson()
+		val json = apiClient.httpGet(url, apiHeaders()).parseJson()
 		val local = json.optJSONArray("local") ?: return emptyList()
 		val result = ArrayList<Manga>(local.length())
 		for (i in 0 until local.length()) {
@@ -165,7 +182,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 
 	override suspend fun getDetails(manga: Manga): Manga {
 		val slug = manga.url.trimEnd('/').substringAfterLast('/')
-		val json = webClient.httpGet("$apiBase/manga/slug/$slug", apiHeaders()).parseJson()
+		val json = apiClient.httpGet("$apiBase/manga/slug/$slug", apiHeaders()).parseJson()
 
 		val title = json.optString("title").ifBlank { manga.title }
 		val synopsis = json.optString("synopsis").takeIf { it.isNotBlank() }
@@ -242,7 +259,7 @@ internal class Komiknesia(context: MangaLoaderContext) :
 		val id = chapter.url.substringAfter("?id=").substringBefore('&').ifBlank {
 			throw IllegalStateException("Missing chapter id in url ${chapter.url}")
 		}
-		val arr = webClient.httpGet("$apiBase/chapters/$id/images", apiHeaders()).parseJsonArray()
+		val arr = apiClient.httpGet("$apiBase/chapters/$id/images", apiHeaders()).parseJsonArray()
 		val pages = ArrayList<MangaPage>(arr.length())
 		for (i in 0 until arr.length()) {
 			val img = arr.optJSONObject(i) ?: continue
@@ -275,5 +292,68 @@ internal class Komiknesia(context: MangaLoaderContext) :
 		"hiatus", "paused" -> MangaState.PAUSED
 		"dropped", "cancelled", "canceled" -> MangaState.ABANDONED
 		else -> null
+	}
+}
+
+private object KomiknesiaSSL {
+
+	// Let's Encrypt R12 intermediate (issued by ISRG Root X1; valid until 2027-03).
+	// Bundled here because api-be.komiknesia.my.id only sends the leaf cert.
+	private const val LE_R12_PEM = "-----BEGIN CERTIFICATE-----\n" +
+		"MIIFBjCCAu6gAwIBAgIRAMISMktwqbSRcdxA9+KFJjwwDQYJKoZIhvcNAQELBQAw\n" +
+		"TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n" +
+		"cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMjQwMzEzMDAwMDAw\n" +
+		"WhcNMjcwMzEyMjM1OTU5WjAzMQswCQYDVQQGEwJVUzEWMBQGA1UEChMNTGV0J3Mg\n" +
+		"RW5jcnlwdDEMMAoGA1UEAxMDUjEyMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\n" +
+		"CgKCAQEA2pgodK2+lP474B7i5Ut1qywSf+2nAzJ+Npfs6DGPpRONC5kuHs0BUT1M\n" +
+		"5ShuCVUxqqUiXXL0LQfCTUA83wEjuXg39RplMjTmhnGdBO+ECFu9AhqZ66YBAJpz\n" +
+		"kG2Pogeg0JfT2kVhgTU9FPnEwF9q3AuWGrCf4yrqvSrWmMebcas7dA8827JgvlpL\n" +
+		"Thjp2ypzXIlhZZ7+7Tymy05v5J75AEaz/xlNKmOzjmbGGIVwx1Blbzt05UiDDwhY\n" +
+		"XS0jnV6j/ujbAKHS9OMZTfLuevYnnuXNnC2i8n+cF63vEzc50bTILEHWhsDp7CH4\n" +
+		"WRt/uTp8n1wBnWIEwii9Cq08yhDsGwIDAQABo4H4MIH1MA4GA1UdDwEB/wQEAwIB\n" +
+		"hjAdBgNVHSUEFjAUBggrBgEFBQcDAgYIKwYBBQUHAwEwEgYDVR0TAQH/BAgwBgEB\n" +
+		"/wIBADAdBgNVHQ4EFgQUALUp8i2ObzHom0yteD763OkM0dIwHwYDVR0jBBgwFoAU\n" +
+		"ebRZ5nu25eQBc4AIiMgaWPbpm24wMgYIKwYBBQUHAQEEJjAkMCIGCCsGAQUFBzAC\n" +
+		"hhZodHRwOi8veDEuaS5sZW5jci5vcmcvMBMGA1UdIAQMMAowCAYGZ4EMAQIBMCcG\n" +
+		"A1UdHwQgMB4wHKAaoBiGFmh0dHA6Ly94MS5jLmxlbmNyLm9yZy8wDQYJKoZIhvcN\n" +
+		"AQELBQADggIBAI910AnPanZIZTKS3rVEyIV29BWEjAK/duuz8eL5boSoVpHhkkv3\n" +
+		"4eoAeEiPdZLj5EZ7G2ArIK+gzhTlRQ1q4FKGpPPaFBSpqV/xbUb5UlAXQOnkHn3m\n" +
+		"FVj+qYv87/WeY+Bm4sN3Ox8BhyaU7UAQ3LeZ7N1X01xxQe4wIAAE3JVLUCiHmZL+\n" +
+		"qoCUtgYIFPgcg350QMUIWgxPXNGEncT921ne7nluI02V8pLUmClqXOsCwULw+PVO\n" +
+		"ZCB7qOMxxMBoCUeL2Ll4oMpOSr5pJCpLN3tRA2s6P1KLs9TSrVhOk+7LX28NMUlI\n" +
+		"usQ/nxLJID0RhAeFtPjyOCOscQBA53+NRjSCak7P4A5jX7ppmkcJECL+S0i3kXVU\n" +
+		"y5Me5BbrU8973jZNv/ax6+ZK6TM8jWmimL6of6OrX7ZU6E2WqazzsFrLG3o2kySb\n" +
+		"zlhSgJ81Cl4tv3SbYiYXnJExKQvzf83DYotox3f0fwv7xln1A2ZLplCb0O+l/AK0\n" +
+		"YE0DS2FPxSAHi0iwMfW2nNHJrXcY3LLHD77gRgje4Eveubi2xxa+Nmk/hmhLdIET\n" +
+		"iVDFanoCrMVIpQ59XWHkzdFmoHXHBV7oibVjGSO7ULSQ7MJ1Nz51phuDJSgAIU7A\n" +
+		"0zrLnOrAj/dfrlEWRhCvAgbuwLZX1A2sjNjXoPOHbsPiy+lO1KF8/XY7\n" +
+		"-----END CERTIFICATE-----\n"
+
+	val trustManager: X509TrustManager by lazy { buildTrustManager() }
+
+	val sslSocketFactory: javax.net.ssl.SSLSocketFactory by lazy {
+		SSLContext.getInstance("TLS").apply {
+			init(null, arrayOf<TrustManager>(trustManager), null)
+		}.socketFactory
+	}
+
+	private fun buildTrustManager(): X509TrustManager {
+		val cf = CertificateFactory.getInstance("X.509")
+		val r12 = ByteArrayInputStream(LE_R12_PEM.toByteArray()).use {
+			cf.generateCertificate(it) as X509Certificate
+		}
+
+		val systemTmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+		systemTmf.init(null as KeyStore?)
+		val systemTm = systemTmf.trustManagers.first { it is X509TrustManager } as X509TrustManager
+
+		val ks = KeyStore.getInstance(KeyStore.getDefaultType())
+		ks.load(null, null)
+		systemTm.acceptedIssuers.forEachIndexed { i, c -> ks.setCertificateEntry("system-$i", c) }
+		ks.setCertificateEntry("le-r12", r12)
+
+		val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+		tmf.init(ks)
+		return tmf.trustManagers.first { it is X509TrustManager } as X509TrustManager
 	}
 }
