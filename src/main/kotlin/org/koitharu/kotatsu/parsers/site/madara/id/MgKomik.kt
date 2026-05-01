@@ -24,6 +24,8 @@ internal class MgKomik(context: MangaLoaderContext) :
 
 	override val userAgentKey: ConfigKey.UserAgent = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
 
+	override val withoutAjax = true
+
 	override val tagPrefix = "genres/"
 	override val listUrl = "komik/"
 	override val datePattern = "dd MMM yy"
