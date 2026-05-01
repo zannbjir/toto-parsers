@@ -7,6 +7,7 @@ import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.model.MangaParserSource
+import org.koitharu.kotatsu.parsers.network.UserAgents
 import org.koitharu.kotatsu.parsers.site.madara.MadaraParser
 import java.util.Locale
 
@@ -14,6 +15,8 @@ import java.util.Locale
 internal class MgKomik(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.MGKOMIK, "id.mgkomik.cc", 20),
 	Interceptor {
+
+	override val userAgentKey: ConfigKey.UserAgent = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
@@ -27,21 +30,19 @@ internal class MgKomik(context: MangaLoaderContext) :
 	override val sourceLocale: Locale = Locale.ENGLISH
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
+		.add("User-Agent", config[userAgentKey])
 		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
 		.add("Accept-Language", "id-ID,id;q=0.9,en;q=0.8")
 		.add("Referer", "https://$domain/")
 		.add("Sec-Fetch-Dest", "document")
 		.add("Sec-Fetch-Mode", "navigate")
-		.add("Sec-Fetch-Site", "same-origin")
+		.add("Sec-Fetch-Site", "none")
 		.add("Sec-Fetch-User", "?1")
 		.add("Upgrade-Insecure-Requests", "1")
 		.build()
 
 	override fun intercept(chain: Interceptor.Chain): Response {
 		val request = chain.request()
-		if (request.header("X-Requested-With") == null) {
-			return chain.proceed(request)
-		}
 		val cleaned = request.newBuilder().removeHeader("X-Requested-With").build()
 		return chain.proceed(cleaned)
 	}
