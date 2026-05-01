@@ -14,7 +14,7 @@ import java.util.*
 internal class Mangakuri(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.MANGAKURI, 20) {
 
-    override val configKeyDomain = ConfigKey.Domain("mangakuri.org")
+    override val configKeyDomain = ConfigKey.Domain("mangakuri.online")
 
     private val apiDomain get() = "api.$domain"
 
