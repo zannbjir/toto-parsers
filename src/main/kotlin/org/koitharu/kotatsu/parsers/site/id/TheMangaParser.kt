@@ -207,7 +207,7 @@ internal class TheManga(context: MangaLoaderContext) :
 				publicUrl = "https://$domain$href",
 				title = a.selectFirstOrThrow(".popular-feature-title").text(),
 				altTitles = emptySet(),
-                description = doc.selectFirst("#synopsis-tab-panel-main .synopsis-text")?.textOrNull()?.trim(),
+                description = a.selectFirst("#synopsis-tab-panel-main .synopsis-text")?.textOrNull()?.trim(),
 				coverUrl = a.selectFirst("img")?.src(),
 				rating = a.selectFirst(".popular-feature-rating span")?.ownText()?.toFloatOrNull()?.div(2f) ?: RATING_UNKNOWN,
 				tags = emptySet(),
