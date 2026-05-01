@@ -16,12 +16,13 @@ internal class MgKomik(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.MGKOMIK, "id.mgkomik.cc", 20),
 	Interceptor {
 
-	override val userAgentKey: ConfigKey.UserAgent = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
-
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
+		keys.add(ConfigKey.InterceptCloudflare(defaultValue = true))
 	}
+
+	override val userAgentKey: ConfigKey.UserAgent = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
 
 	override val tagPrefix = "genres/"
 	override val listUrl = "komik/"
