@@ -12,19 +12,6 @@ import java.util.EnumSet
 import java.util.Locale
 import java.util.TimeZone
 
-/**
- * v2.doujindesu.fun — Next.js App Router SPA, not the same stack as doujindesu.tv.
- *
- * Data is embedded as an RSC (React Server Component) stream in the initial HTML:
- *   <script>self.__next_f.push([1, "<escaped-json-fragment>"])</script>
- * On list pages the stream contains a `"mangas":[...]` array; on detail pages it
- * contains a `"chapters":[...]` array plus manga metadata.
- *
- * Chapter image URLs are NOT present in the initial SSR HTML — the reader page
- * renders them client-side, fetching from the site's /image-proxy route. We
- * extract them from the post-JS HTML via the browser-like user agent; if nothing
- * is found we fall back to RSC endpoint.
- */
 @MangaSourceParser("DOUJINDESUFUN", "DoujinDesu.fun", "id", ContentType.HENTAI)
 internal class DoujinDesuFunParser(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.DOUJINDESUFUN, pageSize = 24) {
@@ -34,6 +21,7 @@ internal class DoujinDesuFunParser(context: MangaLoaderContext) :
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
+		keys.add(ConfigKey.InterceptCloudflare(defaultValue = true))
 	}
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
@@ -203,32 +191,43 @@ internal class DoujinDesuFunParser(context: MangaLoaderContext) :
 		val url = chapter.url.toAbsoluteUrl(domain)
 		val raw = webClient.httpGet(url, getRequestHeaders()).parseRaw()
 
-		// Strategy 1: reader page rendered HTML contains <img alt="Page N" src="/image-proxy?...">
-		val imgRegex = Regex("""<img[^>]+alt="Page\s*\d+"[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE)
 		val seen = LinkedHashSet<String>()
-		for (m in imgRegex.findAll(raw)) {
-			val src = m.groupValues[1]
-			if (seen.add(src)) Unit
+
+		// Strategy 1: reader page rendered HTML contains <img ... alt="Page N" ...
+		// src="/api/image-proxy?url=...">. Real-site attribute order is `src` first
+		// then `alt`, so we run two attribute-order-agnostic regexes and require
+		// both `alt="Page N"` and `src="..."` to appear in the same <img> tag.
+		val imgTagRegex = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE)
+		val srcAttrRegex = Regex("""\bsrc\s*=\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
+		val altPageRegex = Regex("""\balt\s*=\s*"Page\s*\d+"""", RegexOption.IGNORE_CASE)
+		for (m in imgTagRegex.findAll(raw)) {
+			val tag = m.value
+			if (!altPageRegex.containsMatchIn(tag)) continue
+			val src = srcAttrRegex.find(tag)?.groupValues?.getOrNull(1) ?: continue
+			seen.add(src)
 		}
+
 		if (seen.isEmpty()) {
-			// Strategy 2: look inside the RSC payload for pages array / image-proxy URLs
-			val payload = decodeRscPayload(raw)
-			val proxyRegex = Regex("""/image-proxy\?[^"\s<>]+""")
-			for (m in proxyRegex.findAll(payload)) {
+			// Strategy 2: scan for /api/image-proxy?url=... URLs anywhere in the response
+			// (e.g. inside the RSC payload or inline <script> blobs).
+			val proxyRegex = Regex("""/api/image-proxy\?[^"\s<>\\]+""")
+			for (m in proxyRegex.findAll(raw)) {
 				seen.add(m.value)
 			}
-			// Strategy 3: Any cdn-images.doujindesu.fun images that look like chapter pages
+			// Strategy 3: try the decoded RSC payload too in case URLs were JSON-escaped.
 			if (seen.isEmpty()) {
-				val cdnRegex = Regex("""https://[a-zA-Z0-9.-]*doujindesu\.fun/[^\s"']+\.(?:jpg|jpeg|png|webp)""")
-				for (m in cdnRegex.findAll(payload)) {
-					val v = m.value
-					if (!v.contains("/covers/") && !v.contains("/logo") && !v.contains("og-image")) {
-						seen.add(v)
-					}
+				val payload = decodeRscPayload(raw)
+				for (m in proxyRegex.findAll(payload)) {
+					seen.add(m.value)
+				}
+				val legacyProxyRegex = Regex("""/image-proxy\?[^"\s<>\\]+""")
+				for (m in legacyProxyRegex.findAll(payload)) {
+					seen.add(m.value)
 				}
 			}
 		}
-		return seen.mapIndexed { _, src ->
+
+		return seen.map { src ->
 			val full = if (src.startsWith("/")) "https://$domain$src" else src
 			MangaPage(
 				id = generateUid(full),
