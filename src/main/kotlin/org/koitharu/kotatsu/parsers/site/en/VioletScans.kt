@@ -12,6 +12,7 @@ import org.koitharu.kotatsu.parsers.util.selectFirstOrThrow
 import org.koitharu.kotatsu.parsers.util.urlEncoded
 import org.koitharu.kotatsu.parsers.util.parseSafe
 import java.text.SimpleDateFormat
+import java.util.EnumSet
 import java.util.Locale
 
 @MangaSourceParser("VIOLETSCANS", "VioletScans", "en")
@@ -23,14 +24,14 @@ internal class VioletScans(context: MangaLoaderContext) :
             isSearchSupported = true,
         )
 
-	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("violetscans.org")
+	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("violetscans.com")
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
 	}
 
-	override val availableSortOrders: Set<SortOrder> = setOf(SortOrder.NEWEST)
+	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
 	override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions()
 
@@ -112,7 +113,7 @@ internal class VioletScans(context: MangaLoaderContext) :
 		val root = doc.selectFirstOrThrow(".main-info")
 		val coverUrl = root.selectFirstOrThrow(".first-half .thumb img").attr("src")
 
-		val tags = root.selectFirstOrThrow("div .wd-full").map { tag ->
+		val tags = root.select("div .wd-full").map { tag ->
 			val tagName = tag.selectFirstOrThrow("a").text()
 			val tagKey = tag.selectFirstOrThrow("a").attr("href")
 			MangaTag(
