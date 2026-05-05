@@ -118,36 +118,35 @@ internal class Komikucc(context: MangaLoaderContext) :
 	}
 
 	private fun parseMangaListFromRsc(body: String): List<Manga> {
-		// Strategy 1: cari JSON object yang punya key "data" berisi array
 		val dataJson = extractRscJsonKey(body, "data")
-		if (dataJson != null) {
-			return try {
-				val arr = JSONArray(dataJson)
-				(0 until arr.length()).mapNotNull { i ->
-					val obj = arr.optJSONObject(i) ?: return@mapNotNull null
-					val link = obj.optString("link").ifBlank { return@mapNotNull null }
-					val title = obj.optString("title").ifBlank { return@mapNotNull null }
-					val img = obj.optString("img")
-					Manga(
-						id = generateUid(link),
-						url = link,
-						publicUrl = "https://$domain$link",
-						title = title,
-						altTitles = emptySet(),
-						rating = RATING_UNKNOWN,
-						contentRating = null,
-						coverUrl = img.toAbsoluteCdnUrl(),
-						tags = emptySet(),
-						state = null,
-						authors = emptySet(),
-						source = source,
-					)
-				}.reversed()
-			} catch (_: Exception) {
-				emptyList()
+			?: extractDeepScanKey(body, "data")
+			?: return emptyList()
+		return try {
+			val arr = JSONArray(dataJson)
+			(0 until arr.length()).mapNotNull { i ->
+				val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+				val link = obj.optString("link").ifBlank { return@mapNotNull null }
+				val title = obj.optString("title").ifBlank { return@mapNotNull null }
+				val img = obj.optString("img")
+				val url = if (link.startsWith("/")) link else "/komik/$link"
+				Manga(
+					id = generateUid(url),
+					url = url,
+					publicUrl = "https://$domain$url",
+					title = title,
+					altTitles = emptySet(),
+					rating = RATING_UNKNOWN,
+					contentRating = null,
+					coverUrl = img.toAbsoluteCdnUrl(),
+					tags = emptySet(),
+					state = null,
+					authors = emptySet(),
+					source = source,
+				)
 			}
+		} catch (_: Exception) {
+			emptyList()
 		}
-		return emptyList()
 	}
 
 	// =========================== Manga Details ============================
